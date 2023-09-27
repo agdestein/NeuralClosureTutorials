@@ -67,13 +67,23 @@
 # where $p$ is the pressure, $u = (u_x, u_y)$ is the velocity, and $f = (f_x,
 # f_y)$ is the body force.
 #
-# In spectral space, this becomes
+# We can represent the solution in spectral space as follows:
 #
 # $$
-# \mathrm{i} k^\mathsf{T} u = 0
+# u(x, t) = \sum_{k \in \mathbb{Z}^2} \hat{u}(k, t) \mathrm{e}^{\mathrm{i}
+# k^\mathsf{T} x}.
 # $$
 #
-# and
+# Instead of the continuous solution $u$, we now have a countable number of
+# coefficients $\hat{u}$.
+#
+# The mass equation then takes the form
+#
+# $$
+# \mathrm{i} k^\mathsf{T} \hat{u} = 0
+# $$
+#
+# and similarly for the momentum equations:
 #
 # $$
 # \begin{split}
@@ -83,17 +93,16 @@
 # \end{split}
 # $$
 #
-# where $k = (k_x, k_y)$ is the wave number, $\hat{p}$ is the Fourier transform
-# of $p$, and similarly for $\hat{u} = (\hat{u}_x, \hat{u}_y)$ and $\hat{f} =
-# (\hat{f}_x, \hat{f}_y)$. These equations are obtained by replacing
+# where $k = (k_x, k_y)$ is the wave number, $\hat{p}$ is the Fourier
+# coefficients of $p$, and similarly for $\hat{u} = (\hat{u}_x, \hat{u}_y)$ and
+# $\hat{f} = (\hat{f}_x, \hat{f}_y)$. These equations are obtained by replacing
 # $\nabla$ with $\mathrm{i} k$. We will also name the nonlinear (quadratic)
-# term $Q = - \mathrm{i} \widehat{u u^\mathsf{T}} k$.
-# Note that the non-linear term $u u^\mathsf{T}$ is
-# still computed in physical space, as computing it in spectral space would
-# require evaluating a convolution integral instead of a point-wise product.
-# Note also that since the domain $\Omega$ is
-# compact, the modes are countable, meaning that $k \in \mathbb{Z}^2$, paving
-# the way for discretization by truncation.
+# term $Q = - \mathrm{i} \widehat{u u^\mathsf{T}} k$. Note that the non-linear
+# term $u u^\mathsf{T}$ is still computed in physical space, as computing it in
+# spectral space would require evaluating a convolution integral instead of a
+# point-wise product. Note also that since the domain $\Omega$ is compact, the
+# modes are countable, meaning that $k \in \mathbb{Z}^2$, paving the way for
+# discretization by truncation.
 #
 # Taking the time derivative of the mass equation gives a spectral Poisson
 # equation for the pressure:
@@ -794,9 +803,9 @@ randloss = create_randloss(m, v, c; nuse = 50)
 
 # Model warm-up: trigger compilation and get indication of complexity
 randloss(θ₀)
-gradient(θ -> sum(randloss(θ)), θ₀);
+gradient(randloss, θ₀);
 @time randloss(θ₀);
-@time gradient(θ -> sum(randloss(θ)), θ₀);
+@time gradient(randloss, θ₀);
 
 # ### Training
 #
@@ -821,7 +830,7 @@ for i = 1:ntrain
         push!(ihist, ishift + i)
         push!(ehist, e)
         fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
-        hline!([1.0f0]; linestyle = :dash, label = "No model")
+        hline!(fig, [1.0f0]; linestyle = :dash, label = "No model")
         plot!(fig, ihist, ehist; label = "FNO")
         display(fig)
     end
