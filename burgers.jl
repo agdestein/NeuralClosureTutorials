@@ -1,0 +1,631 @@
+# # Neural closure models for the viscous Burgers equation
+
+#-
+
+# ## Running on Google Colab
+#
+# To use Julia on Google colab, we will install Julia using the official version
+# manager Juliup. From the default Python kernel, we can access the shell by
+# starting a line with `!`.
+
+#nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
+
+# We can check that Julia is successfully installed on the Colab instance.
+
+#nb !/root/.juliaup/bin/julia -e 'println("Hello")'
+
+# We now proceed to install the necessary Julia packages, including `IJulia` which
+# will add the Julia notebook kernel.
+
+#nb %%shell
+#nb /root/.juliaup/bin/julia -e '''
+#nb     using Pkg
+#nb     Pkg.add([
+#nb         "ComponentArrays",
+#nb         "FFTW",
+#nb         "IJulia",
+#nb         "LinearAlgebra",
+#nb         "Lux",
+#nb         "LuxCUDA",
+#nb         "NNlib",
+#nb         "Optimisers",
+#nb         "Plots",
+#nb         "Printf",
+#nb         "Random",
+#nb         "Zygote",
+#nb     ])
+#nb '''
+
+# Once this is done, do the following:
+# 1. Reload the browser page (`CTRL`/`CMD` + `R`)
+# 2. In the top right corner of Colab, then select the Julia kernel.
+
+#-
+
+# ## The viscous Burgers equation
+#
+# Consider the periodic domain $\Omega = [0, 1]$. The visous Burgers equation
+# is given by
+#
+# $$
+# \frac{\partial u}{\partial t} = - \frac{1}{2} \frac{\partial }{\partial x}
+# \left( u^2 \right) + \frac{\nu}{\pi} \frac{\partial^2 u}{\partial x^2},
+# $$
+#
+# where $\nu > 0$ is the viscosity.
+#
+# ### Discretization
+#
+# Consider a uniform discretization $x = \left( \frac{n}{N} \right)_{n =
+# 1}^N$, with the additional point $x_0 = 0$ overlapping with $x_N$. The step
+# size is $\Delta = \frac{1}{N}$. Using
+# central finite difference, we get the discrete equations
+#
+# $$
+# \frac{\mathrm{d} u_n}{\mathrm{d} t} = - \frac{1}{2} \frac{u_{n + 1}^2 - u_{n -
+# 1}^2}{2 \Delta} + \frac{\nu}{\pi} \frac{u_{n + 1} - 2 u_n + u_{n - 1}}{\Delta^2},
+# $$
+#
+# with the convention $u_0 = u_N$ and $u_{N + 1} = u_1$ (periodic extension). The
+# degrees of freedom are stored in the vector $u = (u_n)_{n = 1}^N$. In vector
+# notation, we will write this as $\frac{\mathrm{d} u}{\mathrm{d} t} = f(u)$.
+# Solving this equation for sufficiently small $\Delta$ (large $N$) will be
+# referred to as _direct numerical simulation_ (DNS), and can be expensive.
+
+using ComponentArrays
+using CUDA
+using FFTW
+using LinearAlgebra
+using Lux
+using LuxCUDA
+using NNlib
+using Optimisers
+using Plots
+using Printf
+using Random
+using Zygote
+
+# Lux likes to toss random number generators around, for reproducible science
+
+Random.seed!(123)
+rng = Random.default_rng()
+
+# We start by defining the right hand side function, making sure to account for
+# the peridic boundaries.
+
+function f(u; ν, m = nothing, θ = nothing)
+    N = length(u)
+    u₊ = circshift(u, -1)
+    u₋ = circshift(u, 1)
+    du = @. -N / 4 * (u₊^2 - u₋^2) + N^2 * ν / π * (u₊ - 2u + u₋)
+    isnothing(m) || (du += m(u, θ))
+    du
+end
+
+# ## Time discretization
+#
+# For time stepping, we do a simple fourth order explicit Runge-Kutta scheme.
+#
+# From a current state $u^0 = u(t)$, we divide the outer time step
+# $\Delta t$ into $s = 4$ sub-steps as follows:
+#
+# $$
+# \begin{split}
+# F^i & = f(u^{i - 1}) \\
+# u^i & = u^0 + \Delta t \sum_{j = 1}^{i} a_{i j} F^j.
+# \end{split}
+# $$
+#
+# The solution at the next outer time step $t + \Delta t$ is then
+# $u^s = u(t + \Delta t) + \mathcal{O}(\Delta t^4)$. The coefficients
+# of the RK method are chosen as
+#
+# $$
+# a = \begin{pmatrix}
+#     1 & 0 & 0 & 0 \\
+#     0 & 1 & 0 & 0 \\
+#     0 & 0 & 1 & 0 \\
+#     \frac{1}{6} & \frac{2}{6} & \frac{2}{6} & \frac{1}{6}
+# \end{pmatrix}.
+# $$
+#
+# The following function performs one RK4 time step. Note that we never
+# modify any vectors, only create new ones. The AD-framework Zygote prefers
+# it this way.
+
+function step_rk4(f, u₀, dt; params...)
+    a = (
+        (1.0,),
+        (0.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (1.0 / 6.0, 2.0 / 6.0, 2.0 / 6.0, 1.0 / 6.0),
+    )
+    u = u₀
+    k = ()
+    for i = 1:length(a)
+        ki = f(u; params...)
+        k = (k..., ki)
+        u = u₀
+        for j = 1:i
+            u += dt * a[i][j] * k[j]
+        end
+    end
+    u
+end
+
+# For the initial conditions, we create a random spectrum with some decay.
+
+function create_initial_conditions(x, nsample; kmax = 10, decay = k -> 1)
+    # Fourier basis
+    basis = [exp(2π * im * k * x) for x ∈ x, k ∈ -kmax:kmax]
+
+    # Fourier coefficients with random phase and amplitude
+    c = [randn() * exp(-2π * im * rand()) * decay(k) for k ∈ -kmax:kmax, _ ∈ 1:nsample]
+
+    # Random data samples (real-valued)
+    real.(basis * c)
+end
+
+# ## Example simulation
+#
+# Let's test our method in action.
+
+N = 256
+x = LinRange(0.0, 1.0, N + 1)[2:end]
+
+## Initial conditions
+u = create_initial_conditions(x, 1; decay = k -> 1 / (1 + abs(k))^1.2)
+
+# Let's do some time stepping.
+
+ν = 5.0e-3
+t = 0.0
+dt = 1.0e-3
+
+for i = 1:2000
+    t += dt
+    u = step_rk4(f, u, dt; ν)
+    if i % 10 == 0
+        title = @sprintf("Solution, t = %.3f", t)
+        fig = plot(x, u; xlabel = "x", title)
+        display(fig)
+        sleep(0.001) # Time for plot
+    end
+end
+
+# ### Discrete filtering
+#
+# We now assume that we are only interested in the large scale structures of the
+# flow. To compute those, we would ideally like to use a coarser grid than the
+# one needed to resolve all the features of the flow.
+#
+# Consider the discrete filter $\phi \in \mathbb{R}^{M \times N}$ for some $M <
+# N$. Define the filtered velocity field $\bar{u} = \phi u$. It is governed by
+# the equation
+#
+# $$
+# \frac{\mathrm{d} \bar{u}}{\mathrm{d} t} = \bar{f}(\bar{u}) + c(u, \bar{u}),
+# $$
+#
+# where $\bar{f}$ is the same as $f$ but on the coarse grid $\bar{x} = \left( \frac{m}{M}
+# \right)_{m = 1}^M$ and $c(u, \bar{u}) = \phi f(u) - \bar{f}(\bar{u})$ is the
+# commutator error. To close the equations, we approximate the unknown commutator
+# error using a closure model $m$ with parameters $\theta$:
+#
+# $$
+# m(\bar{u}, \theta) \approx c(u, \bar{u}).
+# $$
+#
+# We thus need to make to choices: $m$ and $\theta$. We can then solve the
+# _large eddy simulation_ equation
+#
+# $$
+# \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = \bar{f}(\bar{v}) + m(\bar{v}, θ),
+# $$
+#
+# where $\bar{v}$ is an approximation to the reference quantity $\bar{u}$.
+
+g(u; ν, m, θ) = f(u; ν) + m(u, θ)
+
+# ## Filtering and large eddy simulation (LES)
+#
+# We now assume that a resolution $K_\text{DNS}$ is sufficient to resolve the
+# smallest structures of the flow. The resulting solution will be denoted
+# $\hat{u}(k, t)$, resulting from _direct numerical simulation_ (DNS). Since
+# this resolution is intractable, we will instead do _Large Eddy Simulation_
+# (LES), at a much coarser resolution. The goal of our LES simulation is that
+# the obtained solution $\bar{\hat{v}}$ is similar to the "filtered DNS"
+# solution $\bar{\hat{u}}(k) = \phi(k) \hat{u}(k)$. We here define it using a
+# spectral cut-off filter, where $\bar{\hat{u}}(k) = \hat{u}(k)$ for $k \in
+# \{-K_\text{LES}, \dots, K_\text{LES} - 1 \}$ with $K_\text{LES} <
+# K_\text{DNS}$.
+#
+# The filtered solution $\bar{\hat{u}}$ is governed by the equations
+#
+# $$
+# \frac{\mathrm{d} \bar{\hat{u}}}{\mathrm{d} t} = \bar{P} \left(
+# \bar{\hat{F}}(\bar{\hat{u}}) + c(\hat{u}, \bar{\hat{u}}) \right),
+# $$
+#
+# where $\bar{P}$ and $\bar{\hat{F}}$ are the coarse-resolution version of $P$
+# and $\hat{F}$, and $c = \overline{\hat{Q}(\hat{u})} -
+# \bar{\hat{Q}}(\bar{\hat{u}})$ is the commutator error (only present in the
+# quadratic term for spectral filters). This commutator error is predicted
+# using a closure model $m$ with parameters $\theta$. The resulting closed
+# system produces a predicted velocity $\bar{\hat{v}}$:
+#
+# $$
+# \frac{\mathrm{d} \bar{\hat{v}}}{\mathrm{d} t} = \bar{P} \left(
+# \bar{\hat{F}}(\bar{\hat{v}}) + m(\bar{\hat{v}}, \theta) \right).
+# $$
+#
+
+#-
+
+# ### Model architecture
+#
+# We are free to choose the model architecture $m$.
+
+#-
+
+# #### Fourier neural operator architecture
+#
+# Now let's implement the Fourier Neural Operator (FNO) [^3].
+# A Fourier layer $u \mapsto w$ is given by the following expression:
+#
+# $$
+# w(x) = \sigma \left( z(x) + W u(x) \right)
+# $$
+#
+# where $\hat{z}(k) = R(k) \hat{u}(k)$ for some weight matrix collection
+# $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The important
+# part is the following choice: $R(k) = 0$ for $\| k \| > k_\text{max}$
+# for some $k_\text{max}$. This truncation makes the FNO applicable to
+# any discretization as long as $K > k_\text{max}$, and the same parameters
+# may be reused.
+#
+# The deep learning framework [Lux](https://lux.csail.mit.edu/) let's us define
+# our own layer types. Everything should be explicit ("functional
+# programming"), including random number generation and state modification. The
+# weights are stored in a vector outside the layer, while the layer itself
+# contains information for construction the network.
+
+struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
+    kmax::Int
+    cin::Int
+    cout::Int
+    σ::A
+    init_weight::F
+end
+
+FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_uniform) =
+    FourierLayer(kmax, first(ch), last(ch), σ, init_weight)
+
+# We also need to specify how to initialize the parameters and states. The
+# Fourier layer does not have any hidden states (RNGs) that are modified.
+
+Lux.initialparameters(rng::AbstractRNG, (; kmax, cin, cout, init_weight)::FourierLayer) = (;
+    spatial_weight = init_weight(rng, cout, cin),
+    spectral_weights = init_weight(rng, kmax + 1, kmax + 1, cout, cin, 2),
+)
+Lux.initialstates(::AbstractRNG, ::FourierLayer) = (;)
+Lux.parameterlength((; kmax, cin, cout)::FourierLayer) =
+    cout * cin + (kmax + 1)^2 * 2 * cout * cin
+Lux.statelength(::FourierLayer) = 0
+
+# We now define how to pass inputs through Fourier layer, assuming the
+# following:
+#
+# - Input size: `(N, N, cin, nsample)`
+# - Output size: `(N, N, cout, nsample)`
+
+function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
+    N = size(x, 1)
+
+    ## Destructure params
+    ## The real and imaginary parts of R are stored in two separate channels
+    W = params.spatial_weight
+    W = reshape(W, 1, 1, cout, cin)
+    R = params.spectral_weights
+    R = selectdim(R, 5, 1) .+ im .* selectdim(R, 5, 2)
+
+    ## Spatial part (applied point-wise)
+
+    y = reshape(x, N, N, 1, cin, :)
+    y = sum(W .* y; dims = 4)
+    y = reshape(y, N, N, cout, :)
+
+    ## Spectral part (applied mode-wise)
+    ##
+    ## Steps:
+    ##
+    ## - go to complex-valued spectral space
+    ## - chop off high wavenumbers
+    ## - multiply with weights mode-wise
+    ## - pad with zeros to restore original shape
+    ## - go back to real valued spatial representation
+    ikeep = (1:kmax+1, 1:kmax+1)
+    nkeep = (kmax + 1, kmax + 1)
+    dims = (1, 2)
+    z = fft(x, dims)
+    z = z[ikeep..., :, :]
+    z = reshape(z, nkeep..., 1, cin, :)
+    z = sum(R .* z; dims = 4)
+    z = reshape(z, nkeep..., cout, :)
+    z = pad_zeros(z, (0, N - kmax - 1, 0, N - kmax - 1); dims)
+    z = real.(ifft(z, dims))
+
+    ## Outer layer: Activation over combined spatial and spectral parts
+    ## Note: Even though high wavenumbers are chopped off in `z` and may
+    ## possibly not be present in the input at all, `σ` creates new high
+    ## wavenumbers. High wavenumber functions may thus be represented using a
+    ## sequence of Fourier layers. In this case, the `y`s are the only place
+    ## where information contained in high input wavenumbers survive in a
+    ## Fourier layer.
+    v = σ.(y .+ z)
+
+    ## Fourier layer does not modify state
+    v, state
+end
+
+# We will use four Fourier layers, with a final dense layer.
+# Since the closure is applied in spectral space, we start and end there.
+
+## Number of channels
+ch_fno = [2, 5, 5, 5, 2]
+
+## Cut-off wavenumbers
+kmax_fno = [8, 8, 8, 8]
+
+## Fourier layer activations
+σ_fno = [gelu, gelu, gelu, identity]
+
+## Model
+_fno = Chain(
+    ## Go to physical space
+    u -> real.(ifft(u, (1, 2))),
+
+    ## Some Fourier layers
+    (
+        FourierLayer(kmax_fno[i], ch_fno[i] => ch_fno[i+1]; σ = σ_fno[i]) for
+        i ∈ eachindex(σ_fno)
+    )...,
+
+    ## Put channels in first dimension
+    u -> permutedims(u, (3, 1, 2, 4)),
+
+    ## Compress with a final dense layer
+    Dense(ch_fno[end] => 2 * ch_fno[end], gelu),
+    Dense(2 * ch_fno[end] => 2; use_bias = false),
+
+    ## Put channels back after spatial dimensions
+    u -> permutedims(u, (2, 3, 1, 4)),
+
+    ## Go to spectral space
+    u -> fft(u, (1, 2)),
+)
+
+# Create parameter vector and empty state
+
+θ_fno, state_fno = Lux.setup(rng, _fno)
+θ_fno = gpu_device()(ComponentArray(θ_fno))
+length(θ_fno)
+
+#-
+
+fno(v, θ) = first(_fno(v, θ, state_fno))
+
+# #### Convolutional neural network
+#
+# Alternatively, we may use a CNN closure model. There should be fewer
+# parameters.
+
+## Radius
+r_cnn = [2, 2, 2, 2]
+
+## Channels
+ch_cnn = [2, 8, 8, 8, 2]
+
+## Activations
+σ_cnn = [leakyrelu, leakyrelu, leakyrelu, identity]
+
+## Bias
+b_cnn = [true, true, true, false]
+
+_cnn = Chain(
+    ## Go to physical space
+    u -> real.(ifft(u, (1, 2))),
+
+    ## Add padding so that output has same shape as commutator error
+    u -> pad_circular(u, sum(r_cnn)),
+
+    ## Some convolutional layers
+    (
+        Conv(
+            (2 * r_cnn[i] + 1, 2 * r_cnn[i] + 1),
+            ch_cnn[i] => ch_cnn[i+1],
+            σ_cnn[i];
+            use_bias = b_cnn[i],
+        ) for i ∈ eachindex(r_cnn)
+    )...,
+
+    ## Go to spectral space
+    u -> fft(u, (1, 2)),
+)
+
+# Create parameter vector and empty state
+
+θ_cnn, state_cnn = Lux.setup(rng, _cnn)
+θ_cnn = gpu_device()(ComponentArray(θ_cnn))
+length(θ_cnn)
+
+#-
+
+cnn(v, θ) = first(_cnn(v, θ, state_cnn))
+
+# ### Choosing model parameters: loss function
+#
+# Ideally, we want LES to produce the filtered DNS velocity $\bar{\hat{u}}$. We
+# can thus minimize
+#
+# $$
+# L(\theta) = \| \bar{\hat{v}}_\theta - \bar{\hat{u}} \|^2.
+# $$
+#
+# Alternatively, we can minimize the simpler loss function
+#
+# $$
+# L(\theta) = \| m(\bar{\hat{u}}, \theta) - c(\hat{u}, \bar{\hat{u}}) \|^2.
+# $$
+#
+# This data-driven minimization will give us $\theta$.
+#
+# Random a priori loss function for stochastic gradient descent
+
+mean_squared_error(f, x, y, θ; λ = 1.0f-4) =
+    sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
+
+function create_randloss(f, x, y; nuse = size(x, 2))
+    d = ndims(x)
+    nsample = size(x, d)
+    function randloss(θ)
+        i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
+        xuse = Zygote.@ignore ArrayType(selectdim(x, d, i))
+        yuse = Zygote.@ignore ArrayType(selectdim(y, d, i))
+        mean_squared_error(f, xuse, yuse, θ)
+    end
+end
+
+# Random trajectory (a posteriori) loss function
+
+function trajectory_loss(ubar, θ; params, dt = 1.0f-3)
+    nt = size(ubar, 4)
+    loss = 0.0f0
+    v = ubar[:, :, :, 1]
+    for i = 2:nt
+        v = step_rk4(v, (; params..., θ), dt)
+        u = ubar[:, :, :, i]
+        loss += sum(abs2, v - u) / sum(abs2, u)
+    end
+    loss
+end
+
+function create_randloss_trajectory(ubar; params, dt, nunroll = 10)
+    d = ndims(ubar)
+    nt = size(ubar, d)
+    function randloss(θ)
+        istart = Zygote.@ignore rand(1:nt-nunroll)
+        trajectory = Zygote.@ignore ArrayType(selectdim(ubar, d, istart:istart+nunroll))
+        trajectory_loss(trajectory, θ; params, dt)
+    end
+end
+
+# ### Data generation
+#
+# Create some filtered DNS data (one initial condition only)
+
+nu = 0.001f0
+params_les = create_params(32; nu)
+params_dns = create_params(128; nu)
+
+## Initial conditions
+u = random_field(params_dns)
+
+## Let's do some time stepping.
+
+t = 0.0f0
+dt = 1.0f-3
+nt = 1000
+
+## Filtered snapshots
+v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
+
+## Commutator errors
+c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
+
+spectral_cutoff(u, K) = [
+    u[1:K, 1:K, :] u[1:K, end-K+1:end, :]
+    u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
+]
+
+for i = 1:nt+1
+    if i > 1
+        t += dt
+        u = step_rk4(u, params_dns, dt)
+    end
+    ubar = spectral_cutoff(u, params_les.K)
+    v[:, :, :, i] = Array(ubar)
+    c[:, :, :, i] =
+        Array(spectral_cutoff(F(u, params_dns), params_les.K) - F(ubar, params_les))
+    if i % 10 == 0
+        ## println(i)
+        ω = Array(vorticity(u, params_dns))
+        title = @sprintf("Vorticity, t = %.3f", t)
+        fig = heatmap(ω'; xlabel = "x", ylabel = "y", title)
+        display(fig)
+        sleep(0.001) # Time for plot
+    end
+end
+
+# Choose closure model
+
+m, θ₀ = fno, θ_fno
+## m, θ₀ = cnn, θ_cnn
+
+# Choose loss function
+
+randloss = create_randloss(m, v, c; nuse = 50)
+## randloss = create_randloss_trajectory(v; params = (; params_les..., m), dt = 1f-3, nunroll = 10)
+
+# Model warm-up: trigger compilation and get indication of complexity
+randloss(θ₀)
+gradient(randloss, θ₀);
+@time randloss(θ₀);
+@time gradient(randloss, θ₀);
+
+# ### Training
+#
+# We will monitor the error along the way.
+
+θ = θ₀
+v_test, c_test = ArrayType(v[:, :, :, end:end]), ArrayType(c[:, :, :, end:end])
+opt = Optimisers.setup(Adam(1.0f-3), θ)
+ncallback = 1
+ntrain = 100
+ihist = Int[]
+ehist = Float32[]
+ishift = 0
+
+# The cell below can be repeated
+
+for i = 1:ntrain
+    g = first(gradient(randloss, θ))
+    opt, θ = Optimisers.update(opt, θ, g)
+    if i % ncallback == 0
+        e = norm(m(v_test, θ) - c_test) / norm(c_test)
+        push!(ihist, ishift + i)
+        push!(ehist, e)
+        fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
+        hline!(fig, [1.0f0]; linestyle = :dash, label = "No model")
+        plot!(fig, ihist, ehist; label = "FNO")
+        display(fig)
+    end
+end
+ishift += ntrain
+
+# -
+
+GC.gc()
+CUDA.reclaim()
+
+# # See also
+#
+# - <https://github.com/FourierFlows/FourierFlows.jl>
+#
+# [^1]: S. A. Orszag. _On the elimination of aliasing in finite-difference
+#       schemes by filtering high-wavenumber components._ Journal of the
+#       Atmospheric Sciences 28, 1074-107 (1971).
+# [^2]: <https://en.wikipedia.org/wiki/Fast_Fourier_transform>
+# [^3]: Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and
+#       A. Anandkumar.  _Fourier neural operator for parametric partial differential
+#       equations._ arXiv:[2010.08895](https://arxiv.org/abs/2010.08895), 2021.

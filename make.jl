@@ -1,10 +1,13 @@
 using Literate
 using FileWatching
 
-Literate.notebook("tutorial.jl"; execute = false)
+name = "navier_stokes_spectral.jl"
+name = "burgers.jl"
+
+Literate.notebook(filename; execute = false)
 
 while true
     # Regenerate markdown file at every change
-    watch_file("tutorial.jl")
-    Literate.markdown("tutorial.jl"; codefence = "```julia" => "```")
+    watch_file(filename)
+    Literate.markdown(filename; codefence = "```julia" => "```")
 end
