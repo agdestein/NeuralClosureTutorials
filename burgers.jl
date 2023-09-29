@@ -4,6 +4,8 @@
 
 # ## Running on Google Colab
 #
+# _This section is only needed when running on Google colab._
+#
 # To use Julia on Google colab, we will install Julia using the official version
 # manager Juliup. From the default Python kernel, we can access the shell by
 # starting a line with `!`.
@@ -73,6 +75,17 @@
 # Solving this equation for sufficiently small $\Delta$ (large $N$) will be
 # referred to as _direct numerical simulation_ (DNS), and can be expensive.
 
+#-
+
+# ### Preparing the simulations
+#
+# Julia comes with built in array functionality. Additional functionality is
+# provided in various packages, some of which are available in the Standard
+# Library (LinearAlgebra, Printf, Random, SparseArrays). Others are available in
+# the General Registry, and can be added using the built in package manager Pkg,
+# e.g. `using Pkg; Pkg.add("Plots")`. If you ran the Colab setup section, the
+# packages should already be added.
+
 using ComponentArrays
 using FFTW
 using LinearAlgebra
@@ -86,19 +99,29 @@ using Random
 using SparseArrays
 using Zygote
 
-# Lux likes to toss random number generators around, for reproducible science
+# Lux likes to toss random number generators (RNGs) around, for reproducible
+# science. We therefore need to initialize an RNG. The seed makes sure the same
+# sequence of pseudo-random numbers are generated at each time the session is
+# restarted.
 
 Random.seed!(123)
 rng = Random.default_rng()
 
-# Deep learning functions usually do single precision by default. Here is a
-# weight initializer using double precision, which we will use throughout this
-# file.
+# Deep learning functions usually use single precision floating point numbers by
+# default, as this is preferred on GPUs.  Julia itself, on the other hand, is
+# slightly opinionated towards double precision floating point numbers, e.g.
+# `3.14`, `1 / 6` and `2π` are all of type `Float64` (their single precision
+# counterparts would be the slightly more verbose `3.14f0`, `1f0 / 6 ==
+# Float32(1 / 6)` and `2f0π`). For simplicity, we will only use `Float64`. The
+# only place we will encounter `Float32` in this file is in the default neural
+# network weight initializers, so here is an alternative weight initializer
+# using double precision.
 
 glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims...)
 
-# We start by defining the right hand side function, making sure to account for
-# the peridic boundaries.
+# We start by defining the right hand side function for a vector `u`, making
+# sure to account for the peridic boundaries. The macro `@.` makes sure that all
+# following operations are performed element-wise.
 
 function f(u; ν)
     N = size(u, 1)
@@ -107,7 +130,7 @@ function f(u; ν)
     @. -N / 4 * (u₊^2 - u₋^2) + N^2 * ν / π * (u₊ - 2u + u₋)
 end
 
-# ## Time discretization
+# ### Time discretization
 #
 # For time stepping, we do a simple fourth order explicit Runge-Kutta scheme.
 #
@@ -136,7 +159,8 @@ end
 #
 # The following function performs one RK4 time step. Note that we never
 # modify any vectors, only create new ones. The AD-framework Zygote prefers
-# it this way.
+# it this way. The syntax `params...` lets us pass a variable number of keyword
+# arguments to `f` (for the above `f` there is only one: `ν`).
 
 function step_rk4(f, u₀, dt; params...)
     a = [
@@ -158,7 +182,12 @@ function step_rk4(f, u₀, dt; params...)
     u
 end
 
-# Chaining individual time steps allows us to solve the ODE.
+# Chaining individual time steps allows us to solve the ODE. We here add the
+# option to call a callback function after each time step. Note that the path
+# from the final output `u` is obtained by passing the inputs `u₀` and
+# parameters `params` through a finite amount of computational steps, each of
+# which should have a chain rule defined and recognized in the Zygote AD
+# framework.  The ODE solve should be differentiable, as long as `f` is.
 
 function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback = 1, params...)
     t = 0.0
@@ -173,7 +202,8 @@ function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback =
     u
 end
 
-# For the initial conditions, we create a random spectrum with some decay.
+# For the initial conditions, we create a random spectrum with some spectral
+# amplitude decay profile.
 
 function create_initial_conditions(x, nsample; kmax = 10, decay = k -> 1)
     # Fourier basis
@@ -186,18 +216,17 @@ function create_initial_conditions(x, nsample; kmax = 10, decay = k -> 1)
     real.(basis * c)
 end
 
-# ## Example simulation
+# ### Example simulation
 #
 # Let's test our method in action.
 
 N = 256
 x = LinRange(0.0, 1.0, N + 1)[2:end]
 
-## Initial conditions
+## Initial conditions (one sample vector)
 u = create_initial_conditions(x, 1; decay = k -> 1 / (1 + abs(k))^1.2)
 
-# Let's do some time stepping.
-
+## Let's do some time stepping
 ν = 5.0e-3
 t = 0.0
 dt = 1.0e-3
@@ -217,69 +246,83 @@ u = solve_ode(
     ν,
 )
 
+# This is a typical for the Burgers equation: The initial conditions merge to
+# for a shock, which may be dampened depending on the viscosity.
+
 # ## Discrete filtering and large eddy simulation (LES)
 #
 # We now assume that we are only interested in the large scale structures of the
-# flow. To compute those, we would ideally like to use a coarser grid than the
-# one needed to resolve all the features of the flow.
+# flow. To compute those, we would ideally like to use a coarser resolution
+# ($N_\text{LES}$) than the one needed to resolve all the features of the flow
+# ($N_\text{DNS}$).
 #
-# Consider the discrete filter $\phi \in \mathbb{R}^{M \times N}$ for some $M <
-# N$. Define the filtered velocity field $\bar{u} = \phi u$. It is governed by
-# the equation
+# To define "large scales", we consider a discrete filter $\phi \in
+# \mathbb{R}^{N_\text{LES} \times N_\text{DNS}}$, averaging multiple DNS grid
+# points into LES points. The filtered velocity field is defined by $\bar{u} =
+# \phi u$. It is governed by the equation
 #
 # $$
 # \frac{\mathrm{d} \bar{u}}{\mathrm{d} t} = \bar{f}(\bar{u}) + c(u, \bar{u}),
 # $$
 #
-# where $\bar{f}$ is the same as $f$ but on the coarse grid $\bar{x} = \left( \frac{m}{M}
-# \right)_{m = 1}^M$ and $c(u, \bar{u}) = \phi f(u) - \bar{f}(\bar{u})$ is the
-# commutator error. To close the equations, we approximate the unknown commutator
-# error using a closure model $m$ with parameters $\theta$:
+# where $\bar{f}$ is the same as $f$ but on the coarse grid $\bar{x} = \left(
+# \frac{n}{N_\text{LES}} \right)_{n = 1}^{N_\text{LES}$ and $c(u, \bar{u}) =
+# \phi f(u) - \bar{f}(\bar{u})$ is the commutator error between the coarse grid
+# and filtered fine grid right hand sides. To close the equations, we
+# approximate the unknown commutator error using a closure model $m$ with
+# parameters $\theta$:
 #
 # $$
 # m(\bar{u}, \theta) \approx c(u, \bar{u}).
 # $$
 #
-# We thus need to make to choices: $m$ and $\theta$. We can then solve the
-# _large eddy simulation_ equation
+# We thus need to make two choices: $m$ and $\theta$. We can then solve the
+# LES equation
 #
 # $$
 # \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = \bar{f}(\bar{v}) + m(\bar{v}, θ),
 # $$
 #
-# where $\bar{v}$ is an approximation to the reference quantity $\bar{u}$.
+# where the LES solution $\bar{v}$ is an approximation to the filtered DNS
+# solution $\bar{u}$.
 #
-# The following function includes the correction term.
+# The following right hand side function includes the correction term.
 
 g(u; ν, m, θ) = f(u; ν) + m(u, θ)
 
 # ### Model architecture
 #
-# We are free to choose the model architecture $m$.
+# We are free to choose the model architecture $m$. Here, we will consider two
+# neural network architectures.
 
 #-
 
 # #### Fourier neural operator architecture
 #
-# Now let's implement the Fourier Neural Operator (FNO) [^3].
-# A Fourier layer $u \mapsto w$ is given by the following expression:
+# Now let's implement the Fourier Neural Operator (FNO) [^3]. It is a network
+# composed of _Fourier Layers_.
+# A Fourier layer $u \mapsto w$ transforms the _function_ $u$ into the _function_ $w$.
+# It is defined by the following expression in continuous physical space:
 #
 # $$
-# w(x) = \sigma \left( z(x) + W u(x) \right)
+# w(x) = \sigma \left( z(x) + W u(x) \right), \quad \forall x \in \Omega,
 # $$
 #
-# where $\hat{z}(k) = R(k) \hat{u}(k)$ for some weight matrix collection
-# $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The important
-# part is the following choice: $R(k) = 0$ for $\| k \| > k_\text{max}$
-# for some $k_\text{max}$. This truncation makes the FNO applicable to
-# any discretization as long as $M > 2 k_\text{max}$, and the same parameters
-# may be reused.
+# where $z$ is defined by its Fourier series coefficients $\hat{z}(k) = R(k)
+# \hat{u}(k)$ for all wave numbers $k \in \mathbb{Z}$ and some weight matrix
+# collection $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The
+# important part is the following choice: $R(k) = 0$ for $\| k \| >
+# k_\text{max}$ for some $k_\text{max}$. This truncation makes the FNO
+# applicable to any spatial $N$-discretization of $u$ and $w$ as long as $N > 2
+# k_\text{max}$. The same weight matrices may be reused for different
+# discretizations.
 #
-# The deep learning framework [Lux](https://lux.csail.mit.edu/) let's us define
-# our own layer types. Everything should be explicit ("functional
-# programming"), including random number generation and state modification. The
+# The deep learning framework [Lux](https://lux.csail.mit.edu/) lets us define
+# our own layer types. All functions should be pure ("functional programming"),
+# meaning that the same inputs should produce the same outputs. In particular,
+# this also applies to random number generation and state modification. The
 # weights are stored in a vector outside the layer, while the layer itself
-# contains information for construction the network.
+# contains information for weight initialization.
 
 struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
     kmax::Int
@@ -293,7 +336,7 @@ FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_unifor
     FourierLayer(kmax, first(ch), last(ch), σ, init_weight)
 
 # We also need to specify how to initialize the parameters and states. The
-# Fourier layer does not have any hidden states (RNGs) that are modified.
+# Fourier layer does not have any hidden states that are modified.
 
 Lux.initialparameters(rng::AbstractRNG, (; kmax, cin, cout, init_weight)::FourierLayer) = (;
     spatial_weight = init_weight(rng, cout, cin),
@@ -304,7 +347,8 @@ Lux.parameterlength((; kmax, cin, cout)::FourierLayer) =
     cout * cin + (kmax + 1) * 2 * cout * cin
 Lux.statelength(::FourierLayer) = 0
 
-# We now define how to pass inputs through Fourier layer, assuming the
+# We now define how to pass inputs through Fourier layer. In matrix notation,
+# multiple samples can be processed at the same time. We therefor assume the
 # following:
 #
 # - Input size: `(nx, cin, nsample)`
@@ -341,7 +385,6 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     z = reshape(z, nkeep, 1, cin, :)
     z = sum(R .* z; dims = 3)
     z = reshape(z, nkeep, cout, :)
-    # z = pad_zeros(z, (0, nx - kmax - 1); dims = 1)
     z = vcat(z, zeros(nx - kmax - 1, size(z, 2), size(z, 3)))
     z = real.(ifft(z, 1))
 
@@ -403,16 +446,16 @@ _fno = Chain(
 θ_fno = ComponentArray(θ_fno)
 length(θ_fno)
 
-#-
+# We also define a convenience wrapper hiding the (empty) state manipulation
 
 fno(v, θ) = first(_fno(v, θ, state_fno))
 
 # #### Convolutional neural network
 #
-# Alternatively, we may use a CNN closure model. There should be fewer
-# parameters.
+# In addition to the FNO, we will use a CNN closure model. There should be fewer
+# parameters, but this model only uses local spatial information.
 
-## Radius
+## Kernel radii
 r_cnn = [2, 2, 2, 2]
 
 ## Channels
@@ -421,14 +464,15 @@ ch_cnn = [2, 8, 8, 8, 1]
 ## Activations
 σ_cnn = [leakyrelu, leakyrelu, leakyrelu, identity]
 
-## Bias
+## Use bias
 b_cnn = [true, true, true, false]
 
 _cnn = Chain(
-    ## Create channel
+    ## Create singleton channel
     u -> reshape(u, size(u, 1), 1, size(u, 2)),
 
-    ## Augment channels
+    ## Add a square channel (Burgers RHS has a square term, so maybe the closure
+    ## model can make use of the same "structure")
     u -> cat(u, u .^ 2; dims = 2),
 
     ## Add padding so that output has same shape as commutator error
@@ -445,7 +489,7 @@ _cnn = Chain(
         ) for i ∈ eachindex(r_cnn)
     )...,
 
-    ## Remove singleton channel
+    ## Remove singleton output channel
     u -> reshape(u, size(u, 1), size(u, 3)),
 )
 
@@ -455,107 +499,164 @@ _cnn = Chain(
 θ_cnn = ComponentArray(θ_cnn)
 length(θ_cnn)
 
-#-
+# Convenience wrapper
 
 cnn(v, θ) = first(_cnn(v, θ, state_cnn))
 
 # ### Choosing model parameters: loss function
 #
-# Ideally, we want LES to produce the filtered DNS velocity $\bar{\hat{u}}$. We
-# can thus minimize
+# To choose $\theta$, we will minimize a loss function ("train" the neural
+# network). Since the model predicts the commutator error, the obvious choice is
+# the a priori loss function
 #
 # $$
-# L(\theta) = \| \bar{\hat{v}}_\theta - \bar{\hat{u}} \|^2.
+# L^\text{prior}(\theta) = \| m(\bar{\hat{u}}, \theta) - c(\hat{u}, \bar{\hat{u}}) \|^2.
 # $$
 #
-# Alternatively, we can minimize the simpler loss function
+# This loss function has a simple computational chain, that is mostly comprised
+# of evaluating the neural network $\theta$ itself. Computing the derivative
+# with respect to $\theta$ is thus simple. We call this function "a priori"
+# since it only measures the error of the prediction itself, and not the effect
+# this error has on the LES solution $\bar{v}$.
 #
-# $$
-# L(\theta) = \| m(\bar{\hat{u}}, \theta) - c(\hat{u}, \bar{\hat{u}}) \|^2.
-# $$
-#
-# This data-driven minimization will give us $\theta$.
-#
-# Random a priori loss function for stochastic gradient descent
+# Let's start with the a priori loss. Since instability is not directly
+# detected, we add a regularization term to penalize extremely large weights.
 
 mean_squared_error(f, x, y, θ; λ = 1.0e-8) =
     sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
 
-function create_randloss(f, x, y; nuse = 20)
-    x = reshape(x, size(x, 1), :)
-    y = reshape(y, size(y, 1), :)
-    nsample = size(x, 2)
+# We will only use a subset (`nuse`) of all (`ntrain * nt`) the samples for each
+# loss evaluation.
+
+function create_randloss_commutator(f, u, c; nuse = 20)
+    u = reshape(u, size(x, 1), :)
+    c = reshape(c, size(y, 1), :)
+    nsample = size(u, 2)
     function randloss(θ)
         i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        xuse = Zygote.@ignore x[:, i]
-        yuse = Zygote.@ignore y[:, i]
-        mean_squared_error(f, xuse, yuse, θ)
+        uuse = Zygote.@ignore u[:, i]
+        cuse = Zygote.@ignore c[:, i]
+        mean_squared_error(f, uuse, cuse, θ)
     end
 end
 
-# Random trajectory (a posteriori) loss function
+# Ideally, we want the LES simulation to produce the filtered DNS velocity
+# $\bar{\hat{u}}$. We can thus alternatively minimize the a posteriori loss
+# function
+#
+# $$
+# L^\text{post}(\theta) = \| \bar{\hat{v}}_\theta - \bar{\hat{u}} \|^2.
+# $$
+#
+# This loss function contains more information about the effect of $\theta$ than
+# $L^\text{prior}$. However, it is comprised of a significantly longer
+# computational chain, as it includes time stepping in addition to the neural
+# network evaluation itself. Computing the gradient with respect to $\theta$ is
+# thus more costly, and also requires an AD-friendly time stepping scheme (which
+# we have already taken care of above). Note that it is also possible to compute
+# the gradient of the time-continuous ODE instead of the time-discretized one as
+# we do here. It involves solving an adjoint ODE backwards in time, which in
+# turn has to be discretized. Our approach here is therefore called
+# "discretize-then-optimize", while the adjoint ODE method is called
+# "optimize-then-discretize". The [SciML](https://github.com/sciml) time
+# steppers include both methods.
+#
+# For the a posteriori loss function, we provide the right hand side function
+# `f` (including closure), filtered DNS time series `ubar`, and model
+# parameters. We compute the error between the predicted and reference trajectories
+# at each time point.
 
-function trajectory_loss(f, ubar, θ; dt = 1.0e-3, params...)
+function trajectory_loss(f, ubar; dt = 1.0e-3, params...)
     nt = size(ubar, 3)
     loss = 0.0
     v = ubar[:, :, 1]
     for i = 2:nt
-        v = step_rk4(f, v, dt; params..., θ)
+        v = step_rk4(f, v, dt; params...)
         u = ubar[:, :, i]
         loss += sum(abs2, v - u) / sum(abs2, u)
     end
     loss
 end
 
-function create_randloss_trajectory(f, ubar; dt, nunroll = 10, params...)
-    d = ndims(ubar)
-    nt = size(ubar, d)
+# To limit the length of the computational chain, we only unroll `nunroll`
+# time steps at each loss evaluation. The time step from which to unroll is
+# chosen at random at each evaluation, as are the initial conditions.
+
+function create_randloss_trajectory(f, ubar; dt, nuse = 1, nunroll = 10, params...)
+    nsample = size(ubar, 2)
+    nt = size(ubar, 3)
     function randloss(θ)
+        isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
         istart = Zygote.@ignore rand(1:nt-nunroll)
-        trajectory = Zygote.@ignore selectdim(ubar, d, istart:istart+nunroll)
-        trajectory_loss(trajectory, θ; params..., dt)
+        it = Zygote.@ignore istart:istart+nunroll
+        trajectory = Zygote.@ignore ubar[:, isample, it]
+        trajectory_loss(f, trajectory; dt, params..., θ)
     end
 end
 
 # ### Data generation
 #
-# Create some filtered DNS data (one initial condition only)
+# Now we set up the experiment. We need to decide on the following:
+#
+# - Problem parameter: $\nu$
+# - LES resolution
+# - DNS resolution
+# - Discrete filter
+# - Number of initial conditions
+# - Closure model: FNO and CNN
+# - Simulation time: Too short, and we won't have time to detect long-term
+#   instabilities from our model; too long, and most of the data will be too
+#   smooth for a closure model to be needed (due to viscosity)
+#
+# In addition, we will split our data into
+#
+# - Training data (for choosing $\theta$)
+# - Validation data (just for monitoring training, choose when to stop)
+# - Testing data (for testing performance on unseen data)
 
+## Viscosity
 ν = 5e-3
+
+## Resolution
 n_les = 64
 n_dns = 256
 
+## Grids
 x_les = LinRange(0.0, 1.0, n_les + 1)[2:end]
 x_dns = LinRange(0.0, 1.0, n_dns + 1)[2:end]
 
+## Grid sizes
 Δ_les = 1 / n_les
 Δ_dns = 1 / n_dns
 
-# Filter
+# Create filter
 
 ## Filter width
 Δϕ = 3Δ_les
 
 ## Filter kernel
-gaussian(Δ, x) = √(6 / π) / Δ * exp(-6x^2 / Δ^2)
+gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
 top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
+kernel = gaussian
 
-## Discrete filter matrix
+## Discrete filter matrix (with periodic extension and threshold for sparsity)
 ϕ = sum(-1:1) do z
     d = x_les .- x_dns' .- z
-    gaussian.(Δϕ, d) .* (abs.(d) .≤ 3 ./ 2 .* Δϕ)
-    # top_hat.(Δϕ, d)
+    kernel.(Δϕ, d) .* (abs.(d) .≤ 3 ./ 2 .* Δϕ)
 end
-ϕ = ϕ ./ sum(ϕ; dims = 2)
+ϕ = ϕ ./ sum(ϕ; dims = 2) ## Normalize weights
 ϕ = sparse(ϕ)
 dropzeros!(ϕ)
-heatmap(ϕ; title = "Filter")
+heatmap(ϕ; yflip = true, xmirror = true, title = "Filter")
 
-# Number of initial conditions
+# Create initial conditions
+
+## Number of initial conditions
 ntrain = 10
 nvalid = 2
 ntest = 5
 
+## Absolute positions
 itrain = 1:ntrain
 ivalid = ntrain+1:ntrain+nvalid
 itest = ntrain+nvalid+1:ntrain+nvalid+ntest
@@ -568,18 +669,19 @@ u = create_initial_conditions(
     decay = k -> 1 / (1 + abs(k))^1.2,
 )
 
-## Let's do some time stepping.
+# DNS time stepping
 
 t = 0.0
 dt = 1.0e-3
 nt = 1000
 
-## Filtered snapshots
+## Filtered snapshots (including at t = 0)
 v = zeros(n_les, ntrain + nvalid + ntest, nt + 1)
 
-## Commutator errors
+## Commutator errors (including at t = 0)
 c = zeros(n_les, ntrain + nvalid + ntest, nt + 1)
 
+## Save filtered solution and commutator error after each DNS time step
 function save_sol(u, t, i)
     ubar = ϕ * u
     v[:, :, i+1] = ubar
@@ -587,14 +689,20 @@ function save_sol(u, t, i)
     if i % 10 == 0
         title = @sprintf("Solution, t = %.3f", t)
         fig = plot(; xlabel = "x", title)
-        plot!(fig, x_dns, u[:, 1]; label = "u")
-        plot!(fig, x_les, ubar[:, 1]; label = "ubar")
+        plot!(fig, x_dns, u[:, 3]; linestyle = :dash, label = "u")
+        plot!(fig, x_les, ubar[:, 3]; label = "ubar")
         display(fig)
         sleep(0.001) # Time for plot
     end
 end
 
-u = solve_ode(f, u, dt, nt; callback = save_sol, ncallback = 1, ν)
+## Save for t = 0 first
+save_sol(u, t, 0)
+
+## Do time stepping
+solve_ode(f, u, dt, nt; callback = save_sol, ncallback = 1, ν)
+
+## Split data
 v_train, c_train = v[:, :, itrain], c[:, :, itrain]
 v_valid, c_valid = v[:, :, ivalid], c[:, :, ivalid]
 v_test, c_test = v[:, :, itest], c[:, :, itest]
@@ -606,17 +714,20 @@ m, θ₀ = fno, θ_fno
 
 # Choose loss function
 
-randloss = create_randloss(m, v_train, c_train; nuse = 50)
-## randloss = create_randloss_trajectory(v_train; params = (; params_les..., m), dt = 1f-3, nunroll = 10)
+# ### Training
+#
+# First, we choose a loss function.
+
+randloss = create_randloss_commutator(m, v_train, c_train; nuse = 50)
+## randloss = create_randloss_trajectory(g, v_train; dt = 1f-3, nuse = 3, nunroll = 10, ν)
 
 # Model warm-up: trigger compilation and get indication of complexity
+
 randloss(θ₀)
 gradient(randloss, θ₀);
 @time randloss(θ₀);
 @time gradient(randloss, θ₀);
 
-# ### Training
-#
 # We will monitor the error along the way.
 
 θ = θ₀
@@ -628,7 +739,8 @@ ehist_prior = zeros(0)
 ehist_post = zeros(0)
 ishift = 0
 
-# The cell below can be repeated
+# The cell below can be repeated to continue training. It plots the relative a
+# priori and a posteriori errors on the validation set
 
 for i = 1:niter
     ∇ = first(gradient(randloss, θ))
@@ -654,14 +766,14 @@ for i = 1:niter
 end
 ishift += niter
 
-# # See also
+# ### Model performance
 #
-# - <https://github.com/FourierFlows/FourierFlows.jl>
+# We will now make a comparison of the three closure models (including the
+# "no-model" where $m = 0$, which correspond to solving the DNS equations on the
+# LES grid).
+
+# ## References
 #
-# [^1]: S. A. Orszag. _On the elimination of aliasing in finite-difference
-#       schemes by filtering high-wavenumber components._ Journal of the
-#       Atmospheric Sciences 28, 1074-107 (1971).
-# [^2]: <https://en.wikipedia.org/wiki/Fast_Fourier_transform>
 # [^3]: Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A. Stuart, and
 #       A. Anandkumar.  _Fourier neural operator for parametric partial differential
 #       equations._ arXiv:[2010.08895](https://arxiv.org/abs/2010.08895), 2021.
