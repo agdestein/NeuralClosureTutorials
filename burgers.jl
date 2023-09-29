@@ -139,7 +139,12 @@ end
 # it this way.
 
 function step_rk4(f, u₀, dt; params...)
-    a = ((1.0,), (0.0, 1.0), (0.0, 0.0, 1.0), (1.0 / 6.0, 2.0 / 6.0, 2.0 / 6.0, 1.0 / 6.0))
+    a = [
+        1 0 0 0
+        0 1 0 0
+        0 0 1 0
+        1/6 2/6 2/6 1/6
+    ]
     u = u₀
     k = ()
     for i = 1:length(a)
@@ -147,7 +152,7 @@ function step_rk4(f, u₀, dt; params...)
         k = (k..., ki)
         u = u₀
         for j = 1:i
-            u += dt * a[i][j] * k[j]
+            u += dt * a[i, j] * k[j]
         end
     end
     u
