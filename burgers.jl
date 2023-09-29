@@ -32,6 +32,7 @@
 #nb         "Plots",
 #nb         "Printf",
 #nb         "Random",
+#nb         "SparseArrays",
 #nb         "Zygote",
 #nb     ])
 #nb '''
@@ -83,6 +84,7 @@ using Optimisers
 using Plots
 using Printf
 using Random
+using SparseArrays
 using Zygote
 
 # Lux likes to toss random number generators around, for reproducible science
@@ -93,13 +95,11 @@ rng = Random.default_rng()
 # We start by defining the right hand side function, making sure to account for
 # the peridic boundaries.
 
-function f(u; ν, m = nothing, θ = nothing)
-    N = length(u)
+function f(u; ν)
+    N = size(u, 1)
     u₊ = circshift(u, -1)
     u₋ = circshift(u, 1)
-    du = @. -N / 4 * (u₊^2 - u₋^2) + N^2 * ν / π * (u₊ - 2u + u₋)
-    isnothing(m) || (du += m(u, θ))
-    du
+    @. -N / 4 * (u₊^2 - u₋^2) + N^2 * ν / π * (u₊ - 2u + u₋)
 end
 
 # ## Time discretization
@@ -134,12 +134,7 @@ end
 # it this way.
 
 function step_rk4(f, u₀, dt; params...)
-    a = (
-        (1.0,),
-        (0.0, 1.0),
-        (0.0, 0.0, 1.0),
-        (1.0 / 6.0, 2.0 / 6.0, 2.0 / 6.0, 1.0 / 6.0),
-    )
+    a = ((1.0,), (0.0, 1.0), (0.0, 0.0, 1.0), (1.0 / 6.0, 2.0 / 6.0, 2.0 / 6.0, 1.0 / 6.0))
     u = u₀
     k = ()
     for i = 1:length(a)
@@ -193,7 +188,7 @@ for i = 1:2000
     end
 end
 
-# ### Discrete filtering
+# ## Discrete filtering and large eddy simulation (LES)
 #
 # We now assume that we are only interested in the large scale structures of the
 # flow. To compute those, we would ideally like to use a coarser grid than the
@@ -224,43 +219,10 @@ end
 # $$
 #
 # where $\bar{v}$ is an approximation to the reference quantity $\bar{u}$.
+#
+# The following function includes the correction term.
 
 g(u; ν, m, θ) = f(u; ν) + m(u, θ)
-
-# ## Filtering and large eddy simulation (LES)
-#
-# We now assume that a resolution $K_\text{DNS}$ is sufficient to resolve the
-# smallest structures of the flow. The resulting solution will be denoted
-# $\hat{u}(k, t)$, resulting from _direct numerical simulation_ (DNS). Since
-# this resolution is intractable, we will instead do _Large Eddy Simulation_
-# (LES), at a much coarser resolution. The goal of our LES simulation is that
-# the obtained solution $\bar{\hat{v}}$ is similar to the "filtered DNS"
-# solution $\bar{\hat{u}}(k) = \phi(k) \hat{u}(k)$. We here define it using a
-# spectral cut-off filter, where $\bar{\hat{u}}(k) = \hat{u}(k)$ for $k \in
-# \{-K_\text{LES}, \dots, K_\text{LES} - 1 \}$ with $K_\text{LES} <
-# K_\text{DNS}$.
-#
-# The filtered solution $\bar{\hat{u}}$ is governed by the equations
-#
-# $$
-# \frac{\mathrm{d} \bar{\hat{u}}}{\mathrm{d} t} = \bar{P} \left(
-# \bar{\hat{F}}(\bar{\hat{u}}) + c(\hat{u}, \bar{\hat{u}}) \right),
-# $$
-#
-# where $\bar{P}$ and $\bar{\hat{F}}$ are the coarse-resolution version of $P$
-# and $\hat{F}$, and $c = \overline{\hat{Q}(\hat{u})} -
-# \bar{\hat{Q}}(\bar{\hat{u}})$ is the commutator error (only present in the
-# quadratic term for spectral filters). This commutator error is predicted
-# using a closure model $m$ with parameters $\theta$. The resulting closed
-# system produces a predicted velocity $\bar{\hat{v}}$:
-#
-# $$
-# \frac{\mathrm{d} \bar{\hat{v}}}{\mathrm{d} t} = \bar{P} \left(
-# \bar{\hat{F}}(\bar{\hat{v}}) + m(\bar{\hat{v}}, \theta) \right).
-# $$
-#
-
-#-
 
 # ### Model architecture
 #
@@ -281,7 +243,7 @@ g(u; ν, m, θ) = f(u; ν) + m(u, θ)
 # $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The important
 # part is the following choice: $R(k) = 0$ for $\| k \| > k_\text{max}$
 # for some $k_\text{max}$. This truncation makes the FNO applicable to
-# any discretization as long as $K > k_\text{max}$, and the same parameters
+# any discretization as long as $M > 2 k_\text{max}$, and the same parameters
 # may be reused.
 #
 # The deep learning framework [Lux](https://lux.csail.mit.edu/) let's us define
@@ -306,34 +268,34 @@ FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_unifor
 
 Lux.initialparameters(rng::AbstractRNG, (; kmax, cin, cout, init_weight)::FourierLayer) = (;
     spatial_weight = init_weight(rng, cout, cin),
-    spectral_weights = init_weight(rng, kmax + 1, kmax + 1, cout, cin, 2),
+    spectral_weights = init_weight(rng, kmax + 1, cout, cin, 2),
 )
 Lux.initialstates(::AbstractRNG, ::FourierLayer) = (;)
 Lux.parameterlength((; kmax, cin, cout)::FourierLayer) =
-    cout * cin + (kmax + 1)^2 * 2 * cout * cin
+    cout * cin + (kmax + 1) * 2 * cout * cin
 Lux.statelength(::FourierLayer) = 0
 
 # We now define how to pass inputs through Fourier layer, assuming the
 # following:
 #
-# - Input size: `(N, N, cin, nsample)`
-# - Output size: `(N, N, cout, nsample)`
+# - Input size: `(nx, cin, nsample)`
+# - Output size: `(nx, cout, nsample)`
 
 function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
-    N = size(x, 1)
+    nx = size(x, 1)
 
     ## Destructure params
     ## The real and imaginary parts of R are stored in two separate channels
     W = params.spatial_weight
-    W = reshape(W, 1, 1, cout, cin)
+    W = reshape(W, 1, cout, cin)
     R = params.spectral_weights
-    R = selectdim(R, 5, 1) .+ im .* selectdim(R, 5, 2)
+    R = selectdim(R, 4, 1) .+ im .* selectdim(R, 4, 2)
 
     ## Spatial part (applied point-wise)
 
-    y = reshape(x, N, N, 1, cin, :)
-    y = sum(W .* y; dims = 4)
-    y = reshape(y, N, N, cout, :)
+    y = reshape(x, nx, 1, cin, :)
+    y = sum(W .* y; dims = 3)
+    y = reshape(y, nx, cout, :)
 
     ## Spectral part (applied mode-wise)
     ##
@@ -344,16 +306,15 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     ## - multiply with weights mode-wise
     ## - pad with zeros to restore original shape
     ## - go back to real valued spatial representation
-    ikeep = (1:kmax+1, 1:kmax+1)
-    nkeep = (kmax + 1, kmax + 1)
-    dims = (1, 2)
-    z = fft(x, dims)
-    z = z[ikeep..., :, :]
-    z = reshape(z, nkeep..., 1, cin, :)
+    ikeep = 1:kmax+1
+    nkeep = kmax + 1
+    z = fft(x, 1)
+    z = z[ikeep, :, :]
+    z = reshape(z, nkeep, 1, cin, :)
     z = sum(R .* z; dims = 4)
-    z = reshape(z, nkeep..., cout, :)
-    z = pad_zeros(z, (0, N - kmax - 1, 0, N - kmax - 1); dims)
-    z = real.(ifft(z, dims))
+    z = reshape(z, nkeep, cout, :)
+    z = pad_zeros(z, (0, nx - kmax - 1); dims = 1)
+    z = real.(ifft(z, 1))
 
     ## Outer layer: Activation over combined spatial and spectral parts
     ## Note: Even though high wavenumbers are chopped off in `z` and may
@@ -369,10 +330,9 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
 end
 
 # We will use four Fourier layers, with a final dense layer.
-# Since the closure is applied in spectral space, we start and end there.
 
 ## Number of channels
-ch_fno = [2, 5, 5, 5, 2]
+ch_fno = [2, 5, 5, 5, 1]
 
 ## Cut-off wavenumbers
 kmax_fno = [8, 8, 8, 8]
@@ -382,8 +342,11 @@ kmax_fno = [8, 8, 8, 8]
 
 ## Model
 _fno = Chain(
-    ## Go to physical space
-    u -> real.(ifft(u, (1, 2))),
+    ## Create channel
+    u -> reshape(u, size(u, 1), 1, size(u, 2)),
+
+    ## Augment channels
+    u -> cat(u, u.^2; dims = 2),
 
     ## Some Fourier layers
     (
@@ -392,23 +355,23 @@ _fno = Chain(
     )...,
 
     ## Put channels in first dimension
-    u -> permutedims(u, (3, 1, 2, 4)),
+    u -> permutedims(u, (2, 1, 3)),
 
     ## Compress with a final dense layer
     Dense(ch_fno[end] => 2 * ch_fno[end], gelu),
     Dense(2 * ch_fno[end] => 2; use_bias = false),
 
-    ## Put channels back after spatial dimensions
-    u -> permutedims(u, (2, 3, 1, 4)),
+    ## Put channels back after spatial dimension
+    u -> permutedims(u, (2, 1, 3)),
 
-    ## Go to spectral space
-    u -> fft(u, (1, 2)),
+    ## Remove singleton channel
+    u -> reshape(u, size(u, 1), size(u, 3)),
 )
 
 # Create parameter vector and empty state
 
 θ_fno, state_fno = Lux.setup(rng, _fno)
-θ_fno = gpu_device()(ComponentArray(θ_fno))
+θ_fno = ComponentArray(θ_fno)
 length(θ_fno)
 
 #-
@@ -424,7 +387,7 @@ fno(v, θ) = first(_fno(v, θ, state_fno))
 r_cnn = [2, 2, 2, 2]
 
 ## Channels
-ch_cnn = [2, 8, 8, 8, 2]
+ch_cnn = [2, 8, 8, 8, 1]
 
 ## Activations
 σ_cnn = [leakyrelu, leakyrelu, leakyrelu, identity]
@@ -433,8 +396,11 @@ ch_cnn = [2, 8, 8, 8, 2]
 b_cnn = [true, true, true, false]
 
 _cnn = Chain(
-    ## Go to physical space
-    u -> real.(ifft(u, (1, 2))),
+    ## Create channel
+    u -> reshape(u, size(u, 1), 1, size(u, 2)),
+
+    ## Augment channels
+    u -> cat(u, u.^2; dims = 2),
 
     ## Add padding so that output has same shape as commutator error
     u -> pad_circular(u, sum(r_cnn)),
@@ -449,14 +415,14 @@ _cnn = Chain(
         ) for i ∈ eachindex(r_cnn)
     )...,
 
-    ## Go to spectral space
-    u -> fft(u, (1, 2)),
+    ## Remove singleton channel
+    u -> reshape(u, size(u, 1), size(u, 3)),
 )
 
 # Create parameter vector and empty state
 
 θ_cnn, state_cnn = Lux.setup(rng, _cnn)
-θ_cnn = gpu_device()(ComponentArray(θ_cnn))
+θ_cnn = ComponentArray(θ_cnn)
 length(θ_cnn)
 
 #-
@@ -482,41 +448,42 @@ cnn(v, θ) = first(_cnn(v, θ, state_cnn))
 #
 # Random a priori loss function for stochastic gradient descent
 
-mean_squared_error(f, x, y, θ; λ = 1.0f-4) =
+mean_squared_error(f, x, y, θ; λ = 1.0e-8) =
     sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
 
-function create_randloss(f, x, y; nuse = size(x, 2))
-    d = ndims(x)
-    nsample = size(x, d)
+function create_randloss(f, x, y; nuse = 20)
+    x = reshape(x, size(x, 1), :)
+    y = reshape(y, size(y, 1), :)
+    nsample = size(x, 2)
     function randloss(θ)
         i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        xuse = Zygote.@ignore ArrayType(selectdim(x, d, i))
-        yuse = Zygote.@ignore ArrayType(selectdim(y, d, i))
+        xuse = Zygote.@ignore x[:, i]
+        yuse = Zygote.@ignore y[:, i]
         mean_squared_error(f, xuse, yuse, θ)
     end
 end
 
 # Random trajectory (a posteriori) loss function
 
-function trajectory_loss(ubar, θ; params, dt = 1.0f-3)
-    nt = size(ubar, 4)
-    loss = 0.0f0
-    v = ubar[:, :, :, 1]
+function trajectory_loss(f, ubar, θ; dt = 1.0e-3, params...)
+    nt = size(ubar, 3)
+    loss = 0.0
+    v = ubar[:, :, 1]
     for i = 2:nt
-        v = step_rk4(v, (; params..., θ), dt)
-        u = ubar[:, :, :, i]
+        v = step_rk4(f, v, dt; params..., θ)
+        u = ubar[:, :, i]
         loss += sum(abs2, v - u) / sum(abs2, u)
     end
     loss
 end
 
-function create_randloss_trajectory(ubar; params, dt, nunroll = 10)
+function create_randloss_trajectory(f, ubar; dt, nunroll = 10, params...)
     d = ndims(ubar)
     nt = size(ubar, d)
     function randloss(θ)
         istart = Zygote.@ignore rand(1:nt-nunroll)
-        trajectory = Zygote.@ignore ArrayType(selectdim(ubar, d, istart:istart+nunroll))
-        trajectory_loss(trajectory, θ; params, dt)
+        trajectory = Zygote.@ignore selectdim(ubar, d, istart:istart+nunroll)
+        trajectory_loss(trajectory, θ; params..., dt)
     end
 end
 
@@ -524,44 +491,71 @@ end
 #
 # Create some filtered DNS data (one initial condition only)
 
-nu = 0.001f0
-params_les = create_params(32; nu)
-params_dns = create_params(128; nu)
+ν = 5e-3
+n_les = 64
+n_dns = 256
+
+x_les = LinRange(0.0, 1.0, n_les + 1)[2:end]
+x_dns = LinRange(0.0, 1.0, n_dns + 1)[2:end]
+
+Δ_les = 1 / n_les
+Δ_dns = 1 / n_dns
+
+# Filter
+
+## Filter width
+Δϕ = 3Δ_les
+
+## Filter kernel
+gaussian(Δ, x) = √(6 / π) / Δ * exp(-6x^2 / Δ^2)
+top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
+
+## Discrete filter matrix
+ϕ = sum(-1:1) do z
+    d = x_les .- x_dns' .- z
+    gaussian.(Δϕ, d) .* (abs.(d) .≤ 3 ./ 2 .* Δϕ)
+    # top_hat.(Δϕ, d)
+end
+ϕ = ϕ ./ sum(ϕ; dims = 2)
+ϕ = sparse(ϕ)
+dropzeros!(ϕ)
+heatmap(ϕ; title = "Filter")
+
+# Number of initial conditions
+ntrain = 10
+nvalid = 2
+ntest = 5
 
 ## Initial conditions
-u = random_field(params_dns)
+u = create_initial_conditions(x_dns, ntrain + nvalid + ntest; kmax = 10,
+    decay = k -> 1 / (1 + abs(k))^1.2,
+)
 
 ## Let's do some time stepping.
 
-t = 0.0f0
-dt = 1.0f-3
+t = 0.0
+dt = 1.0e-3
 nt = 1000
 
 ## Filtered snapshots
-v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
+v = complex(zeros(n_les, ntrain + nvalid + ntest, nt + 1))
 
 ## Commutator errors
-c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
-
-spectral_cutoff(u, K) = [
-    u[1:K, 1:K, :] u[1:K, end-K+1:end, :]
-    u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
-]
+c = complex(zeros(n_les, ntrain + nvalid + ntest, nt + 1))
 
 for i = 1:nt+1
     if i > 1
         t += dt
-        u = step_rk4(u, params_dns, dt)
+        u = step_rk4(f, u, dt; ν)
     end
-    ubar = spectral_cutoff(u, params_les.K)
-    v[:, :, :, i] = Array(ubar)
-    c[:, :, :, i] =
-        Array(spectral_cutoff(F(u, params_dns), params_les.K) - F(ubar, params_les))
-    if i % 10 == 0
-        ## println(i)
-        ω = Array(vorticity(u, params_dns))
-        title = @sprintf("Vorticity, t = %.3f", t)
-        fig = heatmap(ω'; xlabel = "x", ylabel = "y", title)
+    ubar = ϕ * u
+    v[:, :, i] = ubar
+    c[:, :, i] = ϕ * f(u; ν) - f(ubar; ν)
+    if i % 1 == 0
+        title = @sprintf("Solution, t = %.3f", t)
+        fig = plot(; xlabel = "x", title)
+        plot!(fig, x_dns, u[:, 1]; label = "u")
+        plot!(fig, x_les, ubar[:, 1]; label = "ubar")
         display(fig)
         sleep(0.001) # Time for plot
     end
@@ -588,12 +582,12 @@ gradient(randloss, θ₀);
 # We will monitor the error along the way.
 
 θ = θ₀
-v_test, c_test = ArrayType(v[:, :, :, end:end]), ArrayType(c[:, :, :, end:end])
-opt = Optimisers.setup(Adam(1.0f-3), θ)
+v_test, c_test = ArrayType(v[:, :, end:end]), ArrayType(c[:, :, end:end])
+opt = Optimisers.setup(Adam(1.0e-3), θ)
 ncallback = 1
 ntrain = 100
 ihist = Int[]
-ehist = Float32[]
+ehist = zeros(0)
 ishift = 0
 
 # The cell below can be repeated
@@ -606,17 +600,12 @@ for i = 1:ntrain
         push!(ihist, ishift + i)
         push!(ehist, e)
         fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
-        hline!(fig, [1.0f0]; linestyle = :dash, label = "No model")
+        hline!(fig, [1.0]; linestyle = :dash, label = "No model")
         plot!(fig, ihist, ehist; label = "FNO")
         display(fig)
     end
 end
 ishift += ntrain
-
-# -
-
-GC.gc()
-CUDA.reclaim()
 
 # # See also
 #
