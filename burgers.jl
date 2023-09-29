@@ -74,7 +74,6 @@
 # referred to as _direct numerical simulation_ (DNS), and can be expensive.
 
 using ComponentArrays
-using CUDA
 using FFTW
 using LinearAlgebra
 using Lux
@@ -91,6 +90,12 @@ using Zygote
 
 Random.seed!(123)
 rng = Random.default_rng()
+
+# Deep learning functions usually do single precision by default. Here is a
+# weight initializer using double precision, which we will use throughout this
+# file.
+
+glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims...)
 
 # We start by defining the right hand side function, making sure to account for
 # the peridic boundaries.
@@ -148,6 +153,21 @@ function step_rk4(f, u₀, dt; params...)
     u
 end
 
+# Chaining individual time steps allows us to solve the ODE.
+
+function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback = 1, params...)
+    t = 0.0
+    u = u₀
+    for i = 1:nt
+        t += dt
+        u = step_rk4(f, u, dt; params...)
+        if i % ncallback == 0
+            callback(u, t, i)
+        end
+    end
+    u
+end
+
 # For the initial conditions, we create a random spectrum with some decay.
 
 function create_initial_conditions(x, nsample; kmax = 10, decay = k -> 1)
@@ -176,17 +196,21 @@ u = create_initial_conditions(x, 1; decay = k -> 1 / (1 + abs(k))^1.2)
 ν = 5.0e-3
 t = 0.0
 dt = 1.0e-3
-
-for i = 1:2000
-    t += dt
-    u = step_rk4(f, u, dt; ν)
-    if i % 10 == 0
+nt = 2000
+u = solve_ode(
+    f,
+    u,
+    dt,
+    nt;
+    ncallback = 20,
+    callback = (u, t, i) -> begin
         title = @sprintf("Solution, t = %.3f", t)
         fig = plot(x, u; xlabel = "x", title)
         display(fig)
-        sleep(0.001) # Time for plot
-    end
-end
+        sleep(0.01) # Time for plot
+    end,
+    ν,
+)
 
 # ## Discrete filtering and large eddy simulation (LES)
 #
@@ -260,7 +284,7 @@ struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
     init_weight::F
 end
 
-FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_uniform) =
+FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_uniform_64) =
     FourierLayer(kmax, first(ch), last(ch), σ, init_weight)
 
 # We also need to specify how to initialize the parameters and states. The
@@ -292,7 +316,6 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     R = selectdim(R, 4, 1) .+ im .* selectdim(R, 4, 2)
 
     ## Spatial part (applied point-wise)
-
     y = reshape(x, nx, 1, cin, :)
     y = sum(W .* y; dims = 3)
     y = reshape(y, nx, cout, :)
@@ -311,9 +334,10 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     z = fft(x, 1)
     z = z[ikeep, :, :]
     z = reshape(z, nkeep, 1, cin, :)
-    z = sum(R .* z; dims = 4)
+    z = sum(R .* z; dims = 3)
     z = reshape(z, nkeep, cout, :)
-    z = pad_zeros(z, (0, nx - kmax - 1); dims = 1)
+    # z = pad_zeros(z, (0, nx - kmax - 1); dims = 1)
+    z = vcat(z, zeros(nx - kmax - 1, size(z, 2), size(z, 3)))
     z = real.(ifft(z, 1))
 
     ## Outer layer: Activation over combined spatial and spectral parts
@@ -332,7 +356,7 @@ end
 # We will use four Fourier layers, with a final dense layer.
 
 ## Number of channels
-ch_fno = [2, 5, 5, 5, 1]
+ch_fno = [2, 5, 5, 5, 5]
 
 ## Cut-off wavenumbers
 kmax_fno = [8, 8, 8, 8]
@@ -346,7 +370,7 @@ _fno = Chain(
     u -> reshape(u, size(u, 1), 1, size(u, 2)),
 
     ## Augment channels
-    u -> cat(u, u.^2; dims = 2),
+    u -> cat(u, u .^ 2; dims = 2),
 
     ## Some Fourier layers
     (
@@ -359,7 +383,7 @@ _fno = Chain(
 
     ## Compress with a final dense layer
     Dense(ch_fno[end] => 2 * ch_fno[end], gelu),
-    Dense(2 * ch_fno[end] => 2; use_bias = false),
+    Dense(2 * ch_fno[end] => 1; use_bias = false),
 
     ## Put channels back after spatial dimension
     u -> permutedims(u, (2, 1, 3)),
@@ -400,7 +424,7 @@ _cnn = Chain(
     u -> reshape(u, size(u, 1), 1, size(u, 2)),
 
     ## Augment channels
-    u -> cat(u, u.^2; dims = 2),
+    u -> cat(u, u .^ 2; dims = 2),
 
     ## Add padding so that output has same shape as commutator error
     u -> pad_circular(u, sum(r_cnn)),
@@ -412,6 +436,7 @@ _cnn = Chain(
             ch_cnn[i] => ch_cnn[i+1],
             σ_cnn[i];
             use_bias = b_cnn[i],
+            init_weight = glorot_uniform_64,
         ) for i ∈ eachindex(r_cnn)
     )...,
 
@@ -526,8 +551,15 @@ ntrain = 10
 nvalid = 2
 ntest = 5
 
+itrain = 1:ntrain
+ivalid = ntrain+1:ntrain+nvalid
+itest = ntrain+nvalid+1:ntrain+nvalid+ntest
+
 ## Initial conditions
-u = create_initial_conditions(x_dns, ntrain + nvalid + ntest; kmax = 10,
+u = create_initial_conditions(
+    x_dns,
+    ntrain + nvalid + ntest;
+    kmax = 10,
     decay = k -> 1 / (1 + abs(k))^1.2,
 )
 
@@ -538,20 +570,16 @@ dt = 1.0e-3
 nt = 1000
 
 ## Filtered snapshots
-v = complex(zeros(n_les, ntrain + nvalid + ntest, nt + 1))
+v = zeros(n_les, ntrain + nvalid + ntest, nt + 1)
 
 ## Commutator errors
-c = complex(zeros(n_les, ntrain + nvalid + ntest, nt + 1))
+c = zeros(n_les, ntrain + nvalid + ntest, nt + 1)
 
-for i = 1:nt+1
-    if i > 1
-        t += dt
-        u = step_rk4(f, u, dt; ν)
-    end
+function save_sol(u, t, i)
     ubar = ϕ * u
-    v[:, :, i] = ubar
-    c[:, :, i] = ϕ * f(u; ν) - f(ubar; ν)
-    if i % 1 == 0
+    v[:, :, i+1] = ubar
+    c[:, :, i+1] = ϕ * f(u; ν) - f(ubar; ν)
+    if i % 10 == 0
         title = @sprintf("Solution, t = %.3f", t)
         fig = plot(; xlabel = "x", title)
         plot!(fig, x_dns, u[:, 1]; label = "u")
@@ -561,6 +589,11 @@ for i = 1:nt+1
     end
 end
 
+u = solve_ode(f, u, dt, nt; callback = save_sol, ncallback = 1, ν)
+v_train, c_train = v[:, :, itrain], c[:, :, itrain]
+v_valid, c_valid = v[:, :, ivalid], c[:, :, ivalid]
+v_test, c_test = v[:, :, itest], c[:, :, itest]
+
 # Choose closure model
 
 m, θ₀ = fno, θ_fno
@@ -568,8 +601,8 @@ m, θ₀ = fno, θ_fno
 
 # Choose loss function
 
-randloss = create_randloss(m, v, c; nuse = 50)
-## randloss = create_randloss_trajectory(v; params = (; params_les..., m), dt = 1f-3, nunroll = 10)
+randloss = create_randloss(m, v_train, c_train; nuse = 50)
+## randloss = create_randloss_trajectory(v_train; params = (; params_les..., m), dt = 1f-3, nunroll = 10)
 
 # Model warm-up: trigger compilation and get indication of complexity
 randloss(θ₀)
@@ -582,30 +615,39 @@ gradient(randloss, θ₀);
 # We will monitor the error along the way.
 
 θ = θ₀
-v_test, c_test = ArrayType(v[:, :, end:end]), ArrayType(c[:, :, end:end])
 opt = Optimisers.setup(Adam(1.0e-3), θ)
-ncallback = 1
-ntrain = 100
+ncallback = 20
+niter = 1000
 ihist = Int[]
-ehist = zeros(0)
+ehist_prior = zeros(0)
+ehist_post = zeros(0)
 ishift = 0
 
 # The cell below can be repeated
 
-for i = 1:ntrain
-    g = first(gradient(randloss, θ))
-    opt, θ = Optimisers.update(opt, θ, g)
+for i = 1:niter
+    ∇ = first(gradient(randloss, θ))
+    opt, θ = Optimisers.update(opt, θ, ∇)
+    println(i)
     if i % ncallback == 0
-        e = norm(m(v_test, θ) - c_test) / norm(c_test)
+        vv, cc = reshape(v_valid, n_les, :), reshape(c_valid, n_les, :)
+        e_prior = norm(m(vv, θ) - cc) / norm(cc)
+        vθ = solve_ode(g, v_valid[:, :, 1], dt, nt; ν, m, θ)
+        vnm = solve_ode(f, v_valid[:, :, 1], dt, nt; ν)
+        e_post = norm(vθ - v_valid[:, :, end]) / norm(v_valid[:, :, end])
+        enm = norm(vnm - v_valid[:, :, end]) / norm(v_valid[:, :, end])
         push!(ihist, ishift + i)
-        push!(ehist, e)
-        fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
-        hline!(fig, [1.0]; linestyle = :dash, label = "No model")
-        plot!(fig, ihist, ehist; label = "FNO")
+        push!(ehist_prior, e_prior)
+        push!(ehist_post, e_post)
+        fig = plot(; xlabel = "Iterations", title = "Relative error")
+        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
+        plot!(fig, ihist, ehist_prior; color = 1, label = "A priori: FNO")
+        hline!(fig, [enm]; color = 2, linestyle = :dash, label = "A posteriori: No model")
+        plot!(fig, ihist, ehist_post; color = 2, label = "A posteriori: FNO")
         display(fig)
     end
 end
-ishift += ntrain
+ishift += niter
 
 # # See also
 #
