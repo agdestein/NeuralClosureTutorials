@@ -1,8 +1,8 @@
 using Literate
 using FileWatching
 
-name = "navier_stokes_spectral.jl"
-name = "burgers.jl"
+filename = "navier_stokes_spectral.jl"
+filename = "burgers.jl"
 
 Literate.notebook(filename; execute = false)
 
