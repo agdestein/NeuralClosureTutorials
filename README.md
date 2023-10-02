@@ -1,4 +1,4 @@
-# NeuralNavierStokes
+# NeuralClosure
 
 Tutorials for learning neural closure models for various discretized PDEs,
 including
