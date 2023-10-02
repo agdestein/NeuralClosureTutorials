@@ -963,10 +963,10 @@ ishift += niter
 # "no-model" where $m = 0$, which corresponds to solving the DNS equations on the
 # LES grid).
 
-# ## Modeling tasks
+# ## Modeling exercices
 #
 # To get confident with modeling ODE right hand sides using machine learning,
-# it can be useful to do one or more of the following tasks.
+# it can be useful to do one or more of the following exercices.
 #
 # ### Trajectory fitting (a posteriori loss function)
 #
