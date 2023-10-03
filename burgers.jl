@@ -8,7 +8,7 @@
 
 #-
 
-# ## Running locally
+# ## Option 1: Running locally
 #
 # 1. Install Julia from one of the following:
 #    - the official [downloads page](https://julialang.org/downloads/) (select
@@ -33,49 +33,52 @@
 
 #-
 
-#nb # ## Running on Google Colab
-#nb #
-#nb # _This section is only needed when running on Google colab._
-#nb #
-#nb # To use Julia on Google colab, we will install Julia using the official version
-#nb # manager Juliup. From the default Python kernel, we can access the shell by
-#nb # starting a line with `!`.
-#nb 
-#nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
-#nb 
-#nb # We can check that Julia is successfully installed on the Colab instance.
-#nb 
-#nb !~/.juliaup/bin/julia -e 'println("Hello")'
-#nb 
-#nb # We now proceed to install the necessary Julia packages, including `IJulia` which
-#nb # will add the Julia notebook kernel.
-#nb 
-#nb %%shell
-#nb ~/.juliaup/bin/julia -e '''
-#nb     using Pkg
-#nb     Pkg.add([
-#nb         "ComponentArrays",
-#nb         "FFTW",
-#nb         "IJulia",
-#nb         "LinearAlgebra",
-#nb         "Lux",
-#nb         "NNlib",
-#nb         "Optimisers",
-#nb         "Plots",
-#nb         "Printf",
-#nb         "Random",
-#nb         "SparseArrays",
-#nb         "Zygote",
-#nb     ])
-#nb '''
-#nb
-#nb # Once this is done, do the following:
-#nb #
-#nb # 1. Reload the browser page (`CTRL`/`CMD` + `R`)
-#nb # 2. In the top right corner of Colab, then select the Julia kernel.
-#nb #
-#nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/select.png?raw=true)
-#nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/runtime.png?raw=true)
+# ## Option 2: Running on Google Colab
+#
+# Add about getting to colab website
+#
+# below we assume in colab
+# _This section is only needed when running on Google colab._
+#
+# To use Julia on Google colab, we will install Julia using the official version
+# manager Juliup. From the default Python kernel, we can access the shell by
+# starting a line with `!`.
+ 
+!curl -fsSL https://install.julialang.org | sh -s -- --yes
+ 
+# We can check that Julia is successfully installed on the Colab instance.
+
+!~/.juliaup/bin/julia -e 'println("Hello")'
+
+# We now proceed to install the necessary Julia packages, including `IJulia` which
+# will add the Julia notebook kernel.
+
+%%shell
+~/.juliaup/bin/julia -e '''
+    using Pkg
+    Pkg.add([
+        "ComponentArrays",
+        "FFTW",
+        "IJulia",
+        "LinearAlgebra",
+        "Lux",
+        "NNlib",
+        "Optimisers",
+        "Plots",
+        "Printf",
+        "Random",
+        "SparseArrays",
+        "Zygote",
+    ])
+'''
+
+# Once this is done, do the following:
+#
+# 1. Reload the browser page (`CTRL`/`CMD` + `R`)
+# 2. In the top right corner of Colab, then select the Julia kernel.
+#
+# ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/select.png?raw=true)
+# ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/runtime.png?raw=true)
 
 #nb #-
 
@@ -193,8 +196,8 @@ end
 #
 # $$
 # \begin{split}
-# F^i & = f(u^{i - 1}) \\
-# u^i & = u^0 + \Delta t \sum_{j = 1}^{i} A_{i j} F^j,
+# f^i & = f(u^{i - 1}) \\
+# u^i & = u^0 + \Delta t \sum_{j = 1}^{i} A_{i j} f^j,
 # \end{split}
 # $$
 #
@@ -234,7 +237,7 @@ function step_rk4(f, u₀, dt; params...)
         k = (k..., ki)
         u = u₀
         for j = 1:i
-            u += dt * A[i, j] * k[j]
+            u = u + dt * A[i, j] * k[j]
         end
     end
     u
@@ -284,7 +287,7 @@ end
 # Let's test our method in action.
 
 ν = 1.0e-3
-nx = 256
+nx = 512
 x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 ## Initial conditions (one sample vector)
