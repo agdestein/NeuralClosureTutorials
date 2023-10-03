@@ -420,7 +420,7 @@ its own.
 
 We call this loss function "a priori" since it only measures the error of the
 prediction itself, and not the effect this error has on the LES solution
-$\bar{v}_\theta$. Since instability in $\bar{v}_\theta$ is not directly
+$\bar{v}_{\theta}$. Since instability in $\bar{v}_{\theta}$ is not directly
 detected in this loss function, we add a regularization term to penalize
 extremely large weights.
 
@@ -429,7 +429,7 @@ mean_squared_error(m, u, c, θ; λ) =
     sum(abs2, m(u, θ) - c) / sum(abs2, c) + λ * sum(abs2, θ) / length(θ)
 ```
 
-We will only use a random subset (`nuse`) of all (`nsample * nt`)
+We will only use a random subset `nuse` of all `nsample * nt`
 solution snapshots at each loss evaluation. This random sampling creates a
 random variable in the loss function, which becomes stochastic. Minimizing it
 using gradient descent is thus called _stochastic gradient descent_.
