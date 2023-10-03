@@ -62,6 +62,17 @@
 # SparseArrays). Others are available in the General Registry, and can be added
 # using the built in package manager Pkg, e.g. `using Pkg; Pkg.add("Plots")`.
 # If you ran the Colab setup section, the packages should already be added.
+#
+# If you cloned the NeuralClosure repository and run this in VSCode,
+# there should be a file called `Project.toml`, specifying dependencies.
+# This file specifies an environment, which can be activated.
+# You can then install the dependencies by uncommenting and running the
+# following cell:
+
+## using Pkg
+## Pkg.instantiate()
+
+# Alernatively, you can add them manually to your global environment:
 
 ## using Pkg
 ## Pkg.add([
