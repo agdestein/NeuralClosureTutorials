@@ -15,12 +15,12 @@ power scientific machine learning. This file is available as
 
 ## Preparing the simulations
 
-Julia comes with built in array functionality. Additional functionality is
-provided in various packages, some of which are available in the Standard
-Library (LinearAlgebra, Printf, Random, SparseArrays). Others are available in
-the General Registry, and can be added using the built in package manager Pkg,
-e.g. `using Pkg; Pkg.add("Plots")`. If you ran the Colab setup section, the
-packages should already be added.
+Julia comes with many built in features, including array functionality.
+Additional functionality is provided in various packages, some of which are
+available in the Standard Library (LinearAlgebra, Printf, Random,
+SparseArrays). Others are available in the General Registry, and can be added
+using the built in package manager Pkg, e.g. `using Pkg; Pkg.add("Plots")`.
+If you ran the Colab setup section, the packages should already be added.
 
 ```julia
 # using Pkg
@@ -94,14 +94,16 @@ $$
 \left( u^2 \right) + \nu \frac{\partial^2 u}{\partial x^2},
 $$
 
-where $\nu > 0$ is the viscosity.
+where $\nu > 0$ is the viscosity. The Burgers equation models the velocity
+profile of a compressible fluid, and has the particularity of creating
+shocks, which are dampened by the viscosity.
 
 ### Discretization
 
-Consider a uniform discretization $x = \left( \frac{n}{N} \right)_{n =
-1}^N$, with the additional point $x_0 = 0$ overlapping with $x_N$. The step
-size is $\Delta x = \frac{1}{N}$. Using a
-central finite difference, we get the discrete equations
+For simplicity, we will use a uniform discretization $x = \left( \frac{n}{N}
+\right)_{n = 1}^N$, with the additional point $x_0 = 0$ overlapping with
+$x_N$. The step size is $\Delta x = \frac{1}{N}$. Using a central finite
+difference, we get the discrete equations
 
 $$
 \frac{\mathrm{d} u_n}{\mathrm{d} t} = - \frac{1}{2} \frac{u_{n + 1}^2 - u_{n -
@@ -111,8 +113,9 @@ $$
 with the convention $u_0 = u_N$ and $u_{N + 1} = u_1$ (periodic extension). The
 degrees of freedom are stored in the vector $u = (u_n)_{n = 1}^N$. In vector
 notation, we will write this as $\frac{\mathrm{d} u}{\mathrm{d} t} = f(u)$.
-Solving this equation for sufficiently small $\Delta x$ (large $N$) will be
-referred to as _direct numerical simulation_ (DNS), and can be expensive.
+Solving this equation for sufficiently small $\Delta x$ (sufficiently large
+$N$) will be referred to as _direct numerical simulation_ (DNS), and can be
+expensive.
 
 Note: This is a simple discretization, not ideal for dealing with shocks.
 
@@ -146,14 +149,17 @@ u^i & = u^0 + \Delta t \sum_{j = 1}^{i} A_{i j} f^j,
 $$
 
 where $A \in \mathbb{R}^{s \times s}$ are the coefficients of the RK method.
-The solution at the next outer time step $t + \Delta t$ is then
-$u^s = u(t + \Delta t) + \mathcal{O}(\Delta t^r)$ where $r$ is the order of
-the RK method.
+The solution at the next outer time step $t + \Delta t$ is then $u^s = u(t +
+\Delta t) + \mathcal{O}(\Delta t^{r + 1})$ if we start exactly from $u(t)$,
+where $r$ is the order of the RK method. If we chain multiple steps from the
+initial conditions $u(0)$ to a final state $u(t)$, the total error is of
+order $\matchal{O}(\Delta t^r)$.
+
 A fourth order method is given by the following coefficients ($s = 4$, $r =
 4$):
 
 $$
-a = \begin{pmatrix}
+A = \begin{pmatrix}
     1 & 0 & 0 & 0 \\
     0 & 1 & 0 & 0 \\
     0 & 0 & 1 & 0 \\
@@ -194,7 +200,8 @@ option to call a callback function after each time step. Note that the path
 to the final output `u` is obtained by passing the inputs `u₀` and
 parameters `params` through a finite amount of computational steps, each of
 which should have a chain rule defined and recognized in the Zygote AD
-framework. Solving the ODE should be differentiable, as long as `f` is.
+framework. The the ODE solution `u` should be differentiable (with respect to
+`u₀` or `params`), as long as `f` is.
 
 ```julia
 function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback = 1, params...)
@@ -211,8 +218,8 @@ function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback =
 end
 ```
 
-For the initial conditions, we create a random spectrum with some spectral
-amplitude decay profile.
+For the initial conditions, we create a random spectrum with a spectral
+amplitude decay profile (default: $\frac{1}{(1 + | k |)^{6/5}}$)
 
 ```julia
 function create_initial_conditions(
@@ -265,7 +272,8 @@ u = solve_ode(
 ```
 
 This is typical for the Burgers equation: The initial conditions merge to
-a shock, which may be dampened depending on the viscosity.
+form a shock, which is eventually dampened due to the viscosity. If we let
+the simulation go on, diffusion will take over and we get a smooth solution.
 
 ## Discrete filtering and large eddy simulation (LES)
 
