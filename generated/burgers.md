@@ -7,84 +7,11 @@ EditURL = "../burgers.jl"
 In this tutorial, we will train neural closure models for the viscous Burgers
 equation in the [Julia](https://julialang.org/) programming language. We here
 use Julia for ease of use, efficiency, and writing differentiable code to
-power scientific machine learning. This file is available as a commented
-Julia script, or as a Jupyter notebook.
+power scientific machine learning. This file is available as
 
-## Option 1: Running locally
-
-1. Install Julia from one of the following:
-   - the official [downloads page](https://julialang.org/downloads/) (select
-     the binary for your platform)
-   - the [Juliaup](https://github.com/JuliaLang/juliaup) version manager.
-     This is the preferred way, as you will get notified about updates to
-     Julia. It requires typing a line into your command line (see README).
-2. Install [VSCode](https://code.visualstudio.com/)
-3. Install the Julia [extension](https://code.visualstudio.com/docs/languages/julia) for VSCode.
-
-In VSCode, you can then choose one of the two options:
-
-- Open the `burgers.jl` file, and execute it line by line with `Shift` +
-  `Enter`. A Julia REPL should open up, and plots should appear in a separate
-  pane.
-- Open the notebook version `burgers.ipynb`. Execute cell by cell with
-  `Shift` + `Enter`. The output and plots appear below each cell. You also
-  get to see the rendered LaTeX equations.
-
-If you do not want to install Julia locally, you can run it on a Google
-cloud machine instead (see next section).
-
-## Option 2: Running on Google Colab
-
-Add about getting to colab website
-
-below we assume in colab
-_This section is only needed when running on Google colab._
-
-To use Julia on Google colab, we will install Julia using the official version
-manager Juliup. From the default Python kernel, we can access the shell by
-starting a line with `!`.
-
-```julia
-!curl -fsSL https://install.julialang.org | sh -s -- --yes
-```
-
-We can check that Julia is successfully installed on the Colab instance.
-
-```julia
-!~/.juliaup/bin/julia -e 'println("Hello")'
-```
-
-We now proceed to install the necessary Julia packages, including `IJulia` which
-will add the Julia notebook kernel.
-
-```julia
-%%shell
-~/.juliaup/bin/julia -e '''
-    using Pkg
-    Pkg.add([
-        "ComponentArrays",
-        "FFTW",
-        "IJulia",
-        "LinearAlgebra",
-        "Lux",
-        "NNlib",
-        "Optimisers",
-        "Plots",
-        "Printf",
-        "Random",
-        "SparseArrays",
-        "Zygote",
-    ])
-'''
-```
-
-Once this is done, do the following:
-
-1. Reload the browser page (`CTRL`/`CMD` + `R`)
-2. In the top right corner of Colab, then select the Julia kernel.
-
-![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/select.png?raw=true)
-![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/runtime.png?raw=true)
+- a commented [Julia script](https://github.com/agdestein/NeuralClosure/blob/main/burgers.jl),
+- a [markdown file](https://github.com/agdestein/NeuralClosure/blob/main/generated/burgers.md),
+- a Jupyter [notebook](https://github.com/agdestein/NeuralClosure/blob/main/generated/burgers.ipynb).
 
 ## Preparing the simulations
 
@@ -125,6 +52,13 @@ using Random
 using SparseArrays
 using Zygote
 ```
+
+Note that we have loaded the reverse mode AD framework
+[Zygote](https://github.com/FluxML/Zygote.jl). This package provides the
+function `gradient`, which is able to differentiate functions that we write,
+including our numerical solvers (to be defined in the next section).
+Gradients allow us to perform gradient descent, and thus "train" our neural
+networks.
 
 The deep learning framework [Lux](https://lux.csail.mit.edu/) likes to toss
 random number generators (RNGs) around, for reproducible science. We
