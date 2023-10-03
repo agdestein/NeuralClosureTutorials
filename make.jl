@@ -1,5 +1,4 @@
 using Literate
-using FileWatching
 
 files = ["burgers.jl", "navier_stokes_spectral.jl"]
 output_dir = "generated"
