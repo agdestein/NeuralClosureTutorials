@@ -5,8 +5,10 @@
 # use Julia for ease of use, efficiency, and writing differentiable code to
 # power scientific machine learning. This file is available as a commented
 # Julia script, or as a Jupyter notebook.
-#
-# To run locally:
+
+#-
+
+# ## Running locally
 #
 # 1. Install Julia from one of the following:
 #    - the official [downloads page](https://julialang.org/downloads/) (select
@@ -39,17 +41,17 @@
 #nb # manager Juliup. From the default Python kernel, we can access the shell by
 #nb # starting a line with `!`.
 #nb 
-#nb #nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
+#nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
 #nb 
 #nb # We can check that Julia is successfully installed on the Colab instance.
 #nb 
-#nb #nb !/root/.juliaup/bin/julia -e 'println("Hello")'
+#nb !~/.juliaup/bin/julia -e 'println("Hello")'
 #nb 
 #nb # We now proceed to install the necessary Julia packages, including `IJulia` which
 #nb # will add the Julia notebook kernel.
 #nb 
 #nb %%shell
-#nb /root/.juliaup/bin/julia -e '''
+#nb ~/.juliaup/bin/julia -e '''
 #nb     using Pkg
 #nb     Pkg.add([
 #nb         "ComponentArrays",
@@ -57,7 +59,6 @@
 #nb         "IJulia",
 #nb         "LinearAlgebra",
 #nb         "Lux",
-#nb         "LuxCUDA",
 #nb         "NNlib",
 #nb         "Optimisers",
 #nb         "Plots",
@@ -75,7 +76,7 @@
 #nb #
 #nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/select.png?raw=true)
 #nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/runtime.png?raw=true)
-#nb 
+
 #nb #-
 
 # ## Preparing the simulations
@@ -89,11 +90,10 @@
 
 ## using Pkg
 ## Pkg.add([
-##     "CoponentArrays",
+##     "ComponentArrays",
 ##     "FFTW",
 ##     "LinearAlgebra",
 ##     "Lux",
-##     "LuxCUDA",
 ##     "NNlib",
 ##     "Optimisers",
 ##     "Plots",
@@ -109,7 +109,6 @@ using ComponentArrays
 using FFTW
 using LinearAlgebra
 using Lux
-using LuxCUDA
 using NNlib
 using Optimisers
 using Plots
@@ -264,7 +263,12 @@ end
 # For the initial conditions, we create a random spectrum with some spectral
 # amplitude decay profile.
 
-function create_initial_conditions(nx, nsample; kmax = 10, decay = k -> 1)
+function create_initial_conditions(
+    nx,
+    nsample;
+    kmax = 10,
+    decay = k -> 1 / (1 + abs(k))^1.2,
+)
     ## Fourier basis
     basis = [exp(2π * im * k * x / nx) for x ∈ 1:nx, k ∈ -kmax:kmax]
 
@@ -279,11 +283,12 @@ end
 #
 # Let's test our method in action.
 
-nx = 256
 ν = 1.0e-3
+nx = 256
+x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 ## Initial conditions (one sample vector)
-u = create_initial_conditions(nx, 1; decay = k -> 1 / (1 + abs(k))^1.2)
+u = create_initial_conditions(nx, 1)
 
 ## Time stepping
 t = 0.0
@@ -333,8 +338,10 @@ u = solve_ode(
 # m(\bar{u}, \theta) \approx c(u, \bar{u}).
 # $$
 #
-# We thus need to make two choices: $m$ and $\theta$. We can then solve the
-# LES equation
+# We thus need to make two choices: $m$ and $\theta$. While the model $m$ will
+# be chosen based on our expertise of numerical methods and machine learning,
+# the parameters $\theta$ will be fitted using high fidelity simulation data.
+# We can then solve the LES equation
 #
 # $$
 # \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = f(\bar{v}) + m(\bar{v}, θ),
@@ -346,6 +353,68 @@ u = solve_ode(
 # The following right hand side function includes the correction term.
 
 g(u; ν, m, θ) = f(u; ν) + m(u, θ)
+
+# ### Data generation
+#
+# This generic function creates a data structure containing filtered DNS data,
+# commutator errors and simulation parameters for a given filter $ϕ$. We also
+# provide some default values.
+
+function create_data(
+    nsample,
+    ϕ;
+    dt = 1.0e-3,
+    nt = 1000,
+    kmax = 10,
+    decay = k -> 1 / (1 + abs(k))^1.2,
+    ν = 1e-3,
+)
+    ## Resolution
+    nx_les, nx_dns = size(ϕ)
+
+    ## Grids
+    x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
+    x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
+
+    ## Output data
+    data = (;
+        ## Filtered snapshots and commutator errors (including at t = 0)
+        u = zeros(nx_les, nsample, nt + 1),
+        c = zeros(nx_les, nsample, nt + 1),
+
+        ## Simulation-specific parameters
+        dt,
+        ν,
+    )
+
+    ## DNS Initial conditions
+    u = create_initial_conditions(nx_dns, nsample; kmax, decay)
+
+    ## Save filtered solution and commutator error after each DNS time step
+    function callback(u, t, i)
+        ubar = ϕ * u
+        data.u[:, :, i+1] = ubar
+        data.c[:, :, i+1] = ϕ * f(u; ν) - f(ubar; ν)
+        if i % 10 == 0
+            title = @sprintf("Solution, t = %.3f", t)
+            np = min(3, nsample)
+            fig = plot(; xlabel = "x", title)
+            plot!(fig, x_dns, u[:, 1:np]; color = (1:np)', linestyle = :dash, label = "u")
+            plot!(fig, x_les, ubar[:, 1:np]; color = (1:np)', label = "ubar")
+            display(fig)
+            sleep(0.001) # Time for plot
+        end
+    end
+
+    ## Save for t = 0.0 first
+    callback(u, 0.0, 0)
+
+    ## Do time stepping (save after each step)
+    solve_ode(f, u, dt, nt; callback, ncallback = 1, ν)
+
+    ## Return data
+    data
+end
 
 # ### Model architecture
 #
@@ -421,12 +490,12 @@ function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u, 
             u -> hcat(map(i -> i(u), input_channels)...),
 
             ## Add padding so that output has same shape as commutator error
-            u -> pad_circular(u, padding),
+            u -> pad_circular(u, padding; dims = 1),
 
             ## Some convolutional layers
             (
                 Conv(
-                    (2 * r[i] + 1, 2 * r[i] + 1),
+                    (2 * r[i] + 1,),
                     channels[i] => channels[i+1],
                     σ[i];
                     use_bias = use_bias[i],
@@ -526,6 +595,14 @@ Lux.initialstates(::AbstractRNG, ::FourierLayer) = (;)
 Lux.parameterlength((; kmax, cin, cout)::FourierLayer) =
     cout * cin + (kmax + 1) * 2 * cout * cin
 Lux.statelength(::FourierLayer) = 0
+
+## Pretty printing
+function Base.show(io::IO, (; kmax, cin, cout, σ)::FourierLayer)
+    print(io, "FourierLayer(", kmax)
+    print(io, ", ", cin, " => ", cout)
+    print(io, "; σ = ", σ)
+    print(io, ")")
+end
 
 ## One more method now
 length(methods(Lux.initialparameters))
@@ -650,10 +727,17 @@ function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u, u -> u 
     )
 end
 
-# ### Choosing model parameters: loss function
+# ### Choosing model parameters
 #
-# To choose $\theta$, we will minimize a loss function ("train" the neural
-# network). Since the model predicts the commutator error, the obvious choice is
+# To choose $\theta$, we will minimize a loss function using an gradient
+# descent based optimization method ("train" the neural
+# network).
+
+#-
+
+# #### Loss function
+#
+# Since the model predicts the commutator error, the obvious choice is
 # the a priori loss function
 #
 # $$
@@ -673,18 +757,19 @@ mean_squared_error(f, x, y, θ; λ) =
     sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
 
 # We will only use a random subset (`nuse`) of all (`nsample * nt`)
-# solution snapshots at each loss evaluation.
+# solution snapshots at each loss evaluation. The `Zygote.@ignore` macro just
+# tells the AD engine Zygote not to complain about the random index selection.
 
 function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
     (; u, c) = data
-    v = reshape(v, size(v, 1), :)
+    u = reshape(u, size(u, 1), :)
     c = reshape(c, size(c, 1), :)
-    nsample = size(v, 2)
+    nsample = size(u, 2)
     function randloss(θ)
         i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        vuse = Zygote.@ignore v[:, i]
+        uuse = Zygote.@ignore u[:, i]
         cuse = Zygote.@ignore c[:, i]
-        mean_squared_error(m, vuse, cuse, θ; λ)
+        mean_squared_error(m, uuse, cuse, θ; λ)
     end
 end
 
@@ -727,6 +812,20 @@ function trajectory_loss(model, u; dt, params...)
     loss / (nt - 1)
 end
 
+# We also make a non-squared variant for error analysis.
+
+function trajectory_error(model, u; dt, params...)
+    nt = size(u, 3)
+    loss = 0.0
+    v = u[:, :, 1]
+    for i = 2:nt
+        v = step_rk4(model, v, dt; params...)
+        ui = u[:, :, i]
+        loss += norm(v - ui) / norm(ui)
+    end
+    loss / (nt - 1)
+end
+
 # To limit the length of the computational chain, we only unroll `nunroll`
 # time steps at each loss evaluation. The time step from which to unroll is
 # chosen at random at each evaluation, as are the initial conditions (`nuse`).
@@ -746,9 +845,80 @@ function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params.
     end
 end
 
-# ## Training and comparing closure models
+# ### Training
 #
-# Now we set up the experiment. We need to decide on the following:
+# During training, we will monitor the error on the validation dataset with a
+# callback. We will plot the history of the a priori and a posteriori errors.
+
+## Initial empty history
+initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
+
+## Create callback for given model and dataset
+function create_callback(m, data)
+    (; u, c, dt, ν) = data
+    uu, cc = reshape(u, size(u, 1), :), reshape(c, size(c, 1), :)
+    e_post_ref = trajectory_error(f, u; dt, ν)
+    function callback(i, θ, state)
+        (; ihist, ehist_prior, ehist_post) = state
+        state = (;
+            ihist = vcat(ihist, i),
+            ehist_prior = vcat(ehist_prior, norm(m(uu, θ) - cc) / norm(cc)),
+            ehist_post = vcat(ehist_post, trajectory_error(g, u; dt, ν, m, θ)),
+        )
+        fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
+        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
+        plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
+        hline!(
+            fig,
+            [e_post_ref];
+            color = 2,
+            linestyle = :dash,
+            label = "A posteriori: No model",
+        )
+        plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
+        display(fig)
+        println("Iteration $i")
+        state
+    end
+end
+
+# For training, we have to initialize an optimizer and a callbackstate (lots of
+# state initilization in this session)
+
+initial_trainstate(optimiser, θ) = (;
+    opt = Optimisers.setup(optimiser, θ),
+    θ,
+    callbackstate = initial_callbackstate(),
+    istart = 0,
+)
+
+"""
+    train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
+
+Perform `niter` iterations of gradient descent on `loss(θ)` for given `optimiser`.
+Every `ncallback` iteration, call `callback(i, θ, callbackstate)` and update
+callback state, where `i` starts at `istart`.
+
+Return a named tuple `(; opt, θ, callbcackstate)` containing the updated
+optimizer state, parameters and callback state.
+"""
+function train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
+    for i = 1:niter
+        ∇ = first(gradient(loss, θ))
+        opt, θ = Optimisers.update(opt, θ, ∇)
+        i % ncallback == 0 && (callbackstate = callback(istart + i, θ, callbackstate))
+    end
+    istart += niter
+    (; opt, θ, callbackstate, istart)
+end
+
+# ## Getting to business: Training and comparing closure models
+#
+# If you have made it this far, you will probably have noticed that we have
+# not yet done any computation (apart from one anecdotical Burgers simulation).
+# We have only defined functions: losses, initializers, models, training...
+#
+# Now we set up an experiment. We need to decide on the following:
 #
 # - Problem parameter: $\nu$
 # - LES resolution
@@ -765,64 +935,6 @@ end
 # - Training data (for choosing $\theta$)
 # - Validation data (just for monitoring training, choose when to stop)
 # - Testing data (for testing performance on unseen data)
-#
-# This generic function creates a data structure containing filtered DNS data,
-# commutator errors and simulation parameters for a given filter $ϕ$.
-
-function create_data(
-    nsample,
-    ϕ;
-    dt = 1.0e-3,
-    nt = 1000,
-    kmax = 10,
-    decay = k -> 1 / (1 + abs(k))^1.2,
-    ν = 1e-3,
-)
-    ## Resolution
-    nx_les, nx_dns = size(ϕ)
-
-    ## Grids
-    x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
-    x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
-
-    ## Output data
-    data = (;
-        ## Filtered snapshots and commutator errors (including at t = 0)
-        u = zeros(nx_les, nsample, nt + 1),
-        c = zeros(nx_les, nsample, nt + 1),
-
-        ## Simulation-specific parameters
-        dt,
-        ν,
-    )
-
-    ## DNS Initial conditions
-    u = create_initial_conditions(nx_dns, nsample; kmax, decay)
-
-    ## Save filtered solution and commutator error after each DNS time step
-    function callback(u, t, i)
-        ubar = ϕ * u
-        data.u[:, :, i+1] = ubar
-        data.c[:, :, i+1] = ϕ * f(u; ν) - f(ubar; ν)
-        if i % 10 == 0
-            title = @sprintf("Solution, t = %.3f", t)
-            fig = plot(; xlabel = "x", title)
-            plot!(fig, x_dns, u[:, 1:3]; linestyle = :dash, label = "u")
-            plot!(fig, x_les, ubar[:, 1:3]; label = "ubar")
-            display(fig)
-            sleep(0.001) # Time for plot
-        end
-    end
-
-    ## Save for t = 0.0 first
-    callback(u, 0.0, 0)
-
-    ## Do time stepping (save after each step)
-    solve_ode(f, u, dt, nt; callback, ncallback = 1, ν)
-
-    ## Return data
-    data
-end
 
 # ### Discretization and filter
 #
@@ -832,15 +944,14 @@ end
 ## Resolution
 nx_les = 64
 nx_dns = 512
-256
 
 ## Grids
 x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
 x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
 
 ## Grid sizes
-Δx_les = 1 / n_les
-Δx_dns = 1 / n_dns
+Δx_les = 1 / nx_les
+Δx_dns = 1 / nx_dns
 
 ## Filter width
 Δϕ = 3 * Δx_les
@@ -863,105 +974,122 @@ heatmap(ϕ; yflip = true, xmirror = true, title = "Filter matrix")
 # ### Create data
 #
 # Create the training, validation, and testing datasets. 
-# Use a different time step for testing to detect overfitting
+# Use a different time step for testing to detect overfitting.
 
-data_train = create_data(10, ϕ; nt = 1000, dt = 1.0e-3)
-data_valid = create_data(2, ϕ; nt = 100, dt = 1.1e-3)
-data_test = create_data(5, ϕ; nt = 1000, dt = 0.8e-3)
+ν = 1.0e-3
+data_train = create_data(10, ϕ; nt = 1000, dt = 1.0e-3, ν)
+data_valid = create_data(2, ϕ; nt = 100, dt = 1.1e-3, ν)
+data_test = create_data(5, ϕ; nt = 1000, dt = 0.8e-3, ν)
 
 # ### Closure models
 #
 # We also include a "no closure" model (baseline for comparison).
 
-noclosure, θ_noclosure = (u, θ) -> 0.0, nothing
+noclosure, θ_noclosure = (u, θ) -> zero(u), nothing
 
-# Create CNN. Note that the last activation is `identity`, as we don't want to
-# restrict the output values. We can inspect the structure in the wrapped Lux
-# `Chain`.
+# #### Train a CNN
+#
+# Create CNN model. Note that the last activation is `identity`, as we don't
+# want to restrict the output values. We can inspect the structure in the
+# wrapped Lux `Chain`.
 
 cnn, θ_cnn = create_cnn(;
     r = [2, 2, 2, 2],
-    channels = [2, 8, 8, 8, 1],
+    channels = [8, 8, 8, 1],
     σ = [leakyrelu, leakyrelu, leakyrelu, identity],
     use_bias = [true, true, true, false],
     rng,
 )
 cnn.chain
 
-# Create FNO.
+# Choose loss function
+
+loss = create_randloss_commutator(cnn, data_train; nuse = 50)
+## loss = create_randloss_trajectory(g, data_train; nuse = 3, nunroll = 10, ν, m = cnn)
+
+# Initilize CNN training state
+
+trainstate = initial_trainstate(Adam(1.0e-3), θ_cnn)
+
+# Model warm-up: trigger compilation and get indication of complexity
+
+loss(θ_cnn)
+gradient(loss, θ_cnn);
+@time loss(θ_cnn);
+@time gradient(loss, θ_cnn);
+
+# Train the CNN. The cell below can be repeated to continue training where the
+# previous training session left off.
+
+trainstate = train(;
+    trainstate...,
+    loss,
+    niter = 2000,
+    ncallback = 20,
+    callback = create_callback(cnn, data_valid),
+)
+
+# Final CNN weights
+
+θ_cnn = trainstate.θ
+
+# #### Train an FNO
+#
+# Create FNO. Like for the CNN, last activation is `identity`.
 
 fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
-    kmax = [8, 8, 8, 8],
+    kmax = [16, 16, 16, 8],
     σ = [gelu, gelu, gelu, identity],
     rng,
 )
 fno.chain
 
-# Choose model
+# Choose loss function
 
-m, θ₀ = fno, θ_fno
-## m, θ₀ = cnn, θ_cnn
+loss = create_randloss_commutator(fno, data_train; nuse = 50)
+## loss = create_randloss_trajectory(g, data_train; nuse = 3, nunroll = 10, ν, m = fno)
 
-# ### Training
-#
-# First, we choose a loss function.
+trainstate = initial_trainstate(Adam(1.0e-3), θ_fno)
 
-randloss = create_randloss_commutator(m, data_train; nuse = 50)
-## randloss = create_randloss_trajectory(g, data_train; nuse = 3, nunroll = 10, ν)
+## Model warm-up: trigger compilation and get indication of complexity
+loss(θ_fno);
+gradient(loss, θ_fno);
+@time loss(θ_fno);
+@time gradient(loss, θ_fno);
 
-# Model warm-up: trigger compilation and get indication of complexity
+# Train the FNO. The cell below can be repeated to continue training where the
+# previous training session left off.
 
-randloss(θ₀);
-gradient(randloss, θ₀);
-@time randloss(θ₀);
-@time gradient(randloss, θ₀);
+trainstate = train(;
+    trainstate...,
+    loss,
+    niter = 1000,
+    ncallback = 20,
+    callback = create_callback(fno, data_valid),
+)
 
-# We will monitor the error along the way.
-
-θ = θ₀
-opt = Optimisers.setup(Adam(1.0e-3), θ)
-ncallback = 20
-niter = 1000
-ihist = Int[]
-ehist_prior = zeros(0)
-ehist_post = zeros(0)
-ishift = 0
-
-function create_callback(model, refmodel, data) end
-
-# The cell below can be repeated to continue training. It plots the relative a
-# priori and a posteriori errors on the validation set
-
-for i = 1:niter
-    ∇ = first(gradient(randloss, θ))
-    opt, θ = Optimisers.update(opt, θ, ∇)
-    println(i)
-    if i % ncallback == 0
-        vv, cc = reshape(v_valid, n_les, :), reshape(c_valid, n_les, :)
-        e_prior = norm(m(vv, θ) - cc) / norm(cc)
-        vθ = solve_ode(g, v_valid[:, :, 1], dt, nt; ν, m, θ)
-        vnm = solve_ode(f, v_valid[:, :, 1], dt, nt; ν)
-        e_post = norm(vθ - v_valid[:, :, end]) / norm(v_valid[:, :, end])
-        enm = norm(vnm - v_valid[:, :, end]) / norm(v_valid[:, :, end])
-        push!(ihist, ishift + i)
-        push!(ehist_prior, e_prior)
-        push!(ehist_post, e_post)
-        fig = plot(; xlabel = "Iterations", title = "Relative error")
-        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
-        plot!(fig, ihist, ehist_prior; color = 1, label = "A priori: FNO")
-        hline!(fig, [enm]; color = 2, linestyle = :dash, label = "A posteriori: No model")
-        plot!(fig, ihist, ehist_post; color = 2, label = "A posteriori: FNO")
-        display(fig)
-    end
-end
-ishift += niter
+# Final FNO weights
+θ_fno = trainstate.θ
 
 # ### Model performance
 #
 # We will now make a comparison of the three closure models (including the
 # "no-model" where $m = 0$, which corresponds to solving the DNS equations on the
 # LES grid).
+
+m = [noclosure, cnn, fno]
+θ = [θ_noclosure, θ_cnn, θ_fno]
+labels = ["0", "CNN", "FNO"]
+
+println("Relative a posteriori errors:")
+for i in eachindex(m)
+    e = trajectory_error(g, data_test.u; data_test.dt, ν, m = m[i], θ = θ[i])
+    print(labels[i])
+    print(":\t ")
+    print(e)
+    println()
+end
 
 # ## Modeling exercices
 #
@@ -1036,6 +1164,7 @@ ishift += niter
 #       Pages 94-107,
 #       ISSN 0898-1221,
 #       <https://doi.org/10.1016/j.camwa.2023.04.030>.
+#
 # [^5]: R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud.
 #       _Neural Ordinary Differential Equations_.
 #       arXiv:[1806.07366](https://arxiv.org/abs/1806.07366), 2018.
