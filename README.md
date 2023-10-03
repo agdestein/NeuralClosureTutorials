@@ -45,6 +45,7 @@ editor such as VSCode can also be useful. Proposed workflow:
     1. Create a new window: `Ctrl`/`Cmd` + `Shift` + `N`
     1. Open the explorer `Ctrl`/`Cmd` + `Shift` + `E`
     1. Click the button `Clone Repository`
+       ![](assets/vscode_clone.png)
     1. Paste the following URL:
 
        ```
