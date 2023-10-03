@@ -43,8 +43,10 @@ editor such as VSCode can also be useful. Proposed workflow:
    This gives syntax highlighting, code execution with `Shift` + `Enter` etc.
 1. Clone the repository in VSCode:
     1. Create a new window: `Ctrl`/`Cmd` + `Shift` + `N`
-    1. Open the explorer `Ctrl`/`Cmd` + `Shift` + `E`
-    1. Click the button `Clone Repository`
+    1. Open the _Source control_ side panel with `Ctrl`/`Cmd` + `Shift` + `G`
+    1. Click the button `Clone Repository`. If you do not see this button,
+       there should be an instruction there instead to first install
+       [Git](https://git-scm.com/downloads).
        ![](assets/vscode_clone.png)
     1. Paste the following URL:
 
@@ -54,9 +56,18 @@ editor such as VSCode can also be useful. Proposed workflow:
 
     1. Select a location for where you want the folder
     1. Open the cloned repository
+1. *Activate the project:* A notification should pop up asking you about the
+   environment. If not, click on the `v1.9` environment symbol in the bottom
+   bar of VSCode, or, alternatively, open the command palette (`Ctrl`/`Cmd` +
+   `Shift` + `P`), start typing `julia`, and select
+   `Julia: Change current environment`.
+   Set the environment to `NeuralClosure`. 
 1. In the file explorer (`Ctrl`/`Cmd` + `Shift` + `E`), you should see the
-   files. Open `generated/burgers.ipynb`. Execute the notebook one cell at the
-   time with `Shift` + `Enter`. Output and plots should appear below each cell.
+   files. Open `generated/burgers.ipynb`.
+   Execute the notebook one cell at the time with `Shift` + `Enter`.
+   Output and plots should appear below each cell.
+   Start with uncommenting and executing the cell with
+   `Pkg.instantiate()`, which will install the local dependencies.
 
 Note: If you do not like the notebook format, you can alternatively open the
 source script `burgers.jl` or the markdown file `generated/burgers.md`. Both
