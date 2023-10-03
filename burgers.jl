@@ -244,7 +244,7 @@ end
 # framework. The the ODE solution `u` should be differentiable (with respect to
 # `u₀` or `params`), as long as `f` is.
 
-function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback = 1, params...)
+function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback = 1, params...)
     t = 0.0
     u = u₀
     for i = 1:nt
@@ -288,14 +288,11 @@ x = LinRange(0.0, 1.0, nx + 1)[2:end]
 u = create_initial_conditions(nx, 1)
 
 ## Time stepping
-t = 0.0
-dt = 1.0e-3
-nt = 2000
 u = solve_ode(
     f,
-    u,
-    dt,
-    nt;
+    u;
+    dt = 1.0e-3,
+    nt = 2000,
     ncallback = 20,
     callback = (u, t, i) -> begin
         title = @sprintf("Solution, t = %.3f", t)
@@ -408,7 +405,7 @@ function create_data(
     callback(u, 0.0, 0)
 
     ## Do time stepping (save after each step)
-    solve_ode(f, u, dt, nt; callback, ncallback = 1, ν)
+    solve_ode(f, u; dt, nt, callback, ncallback = 1, ν)
 
     ## Return data
     data
