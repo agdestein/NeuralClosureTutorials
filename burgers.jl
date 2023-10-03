@@ -121,7 +121,7 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 
 # ## The viscous Burgers equation
 #
-# Consider the periodic domain $\Omega = [0, 1]$. The visous Burgers equation
+# Consider the periodic domain $\Omega = [0, 1]$. The viscous Burgers equation
 # is given by
 #
 # $$
@@ -147,7 +147,12 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 #
 # with the convention $u_0 = u_N$ and $u_{N + 1} = u_1$ (periodic extension). The
 # degrees of freedom are stored in the vector $u = (u_n)_{n = 1}^N$. In vector
-# notation, we will write this as $\frac{\mathrm{d} u}{\mathrm{d} t} = f(u)$.
+# notation, we will write this as
+#
+# $$
+# \frac{\mathrm{d} u}{\mathrm{d} t} = f(u).
+# $$
+#
 # Solving this equation for sufficiently small $\Delta x$ (sufficiently large
 # $N$) will be referred to as _direct numerical simulation_ (DNS), and can be
 # expensive.
@@ -160,7 +165,9 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 # sure to account for the periodic boundaries. The macro `@.` makes sure that all
 # following operations are performed element-wise. Note that `circshift` here
 # acts along the first dimension, so `f` can be applied to multiple snapshots
-# at once (stored as columns in the matrix `u`).
+# at once (stored as columns in the matrix `u`). Note the semicolon `;` in the
+# function signature: It is used to separate positional arguments (here `u`)
+# from keyword arguments (here `ν`).
 
 function f(u; ν)
     N = size(u, 1)
@@ -188,7 +195,7 @@ end
 # \Delta t) + \mathcal{O}(\Delta t^{r + 1})$ if we start exactly from $u(t)$,
 # where $r$ is the order of the RK method. If we chain multiple steps from the
 # initial conditions $u(0)$ to a final state $u(t)$, the total error is of
-# order $\matchal{O}(\Delta t^r)$.
+# order $\mathcal{O}(\Delta t^r)$.
 #
 # A fourth order method is given by the following coefficients ($s = 4$, $r =
 # 4$):
@@ -204,9 +211,10 @@ end
 #
 # The following function performs one RK4 time step. Note that we never modify
 # any vectors, only create new ones. The AD-framework Zygote prefers it this
-# way. The syntax `params...` lets us pass a variable number of keyword
-# arguments to the right hand side function `f` (for the above `f` there is
-# only one: `ν`).
+# way. The splatting syntax `params...` lets us pass a variable number of
+# keyword arguments to the right hand side function `f` (for the above `f`
+# there is only one: `ν`). Similarly, `k...` splats the tuple `k`, but but now
+# like a positional arguement instead of keyword arguments (without names).
 
 function step_rk4(f, u₀, dt; params...)
     A = [
@@ -293,7 +301,7 @@ u = solve_ode(
         title = @sprintf("Solution, t = %.3f", t)
         fig = plot(x, u; xlabel = "x", title)
         display(fig)
-        sleep(0.01) # Time for plot
+        sleep(0.01) # Time for plot to render
     end,
     ν,
 )
@@ -357,7 +365,7 @@ function create_data(
     nt = 1000,
     kmax = 10,
     decay = k -> 1 / (1 + abs(k))^1.2,
-    ν = 1e-3,
+    ν = 1.0e-3,
 )
     ## Resolution
     nx_les, nx_dns = size(ϕ)
@@ -392,7 +400,7 @@ function create_data(
             plot!(fig, x_dns, u[:, 1:np]; color = (1:np)', linestyle = :dash, label = "u")
             plot!(fig, x_les, ubar[:, 1:np]; color = (1:np)', label = "ubar")
             display(fig)
-            sleep(0.001) # Time for plot
+            sleep(0.001) # Time for plot to render
         end
     end
 
@@ -415,34 +423,48 @@ end
 
 # #### Loss function
 #
-# Since the model predicts the commutator error, the obvious choice is
-# the a priori loss function
+# Since the model is used to predict the commutator error, the obvious choice
+# of loss function is the a priori loss function
 #
 # $$
 # L^\text{prior}(\theta) = \| m(\bar{u}, \theta) - c(u, \bar{u}) \|^2.
 # $$
 #
 # This loss function has a simple computational chain, that is mostly comprised
-# of evaluating the neural network $m$ itself. Computing the derivative
-# with respect to $\theta$ is thus simple. We call this function "a priori"
-# since it only measures the error of the prediction itself, and not the effect
-# this error has on the LES solution $\bar{v}$.
+# of evaluating the neural network $m$ itself. Computing the gradient with
+# respect to $\theta$ is thus simple. The gradient is given by
 #
-# Let's start with the a priori loss. Since instability is not directly
-# detected, we add a regularization term to penalize extremely large weights.
+# $$
+# \frac{\mathrm{d} L^\text{prior}}{\mathrm{d} t}(\theta) = 2 (m(\bar{u},
+# \theta) - c(u, \bar{u}))^\mathsf{T}
+# \frac{\partial m}{\partial \theta}(\bar{u}, \theta),
+# $$
+#
+# but we don't need to specify any of that, Zygote figures it out just fine on
+# its own.
+#
+# We call this loss function "a priori" since it only measures the error of the
+# prediction itself, and not the effect this error has on the LES solution
+# $\bar{v}_\theta$. Since instability in $\bar{v}_\theta$ is not directly
+# detected in this loss function, we add a regularization term to penalize
+# extremely large weights.
 
-mean_squared_error(f, x, y, θ; λ) =
-    sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
+mean_squared_error(m, u, c, θ; λ) =
+    sum(abs2, m(u, θ) - c) / sum(abs2, c) + λ * sum(abs2, θ) / length(θ)
 
 # We will only use a random subset (`nuse`) of all (`nsample * nt`)
-# solution snapshots at each loss evaluation. The `Zygote.@ignore` macro just
-# tells the AD engine Zygote not to complain about the random index selection.
+# solution snapshots at each loss evaluation. This random sampling creates a
+# random variable in the loss function, which becomes stochastic. Minimizing it
+# using gradient descent is thus called _stochastic gradient descent_.
+# The `Zygote.@ignore` macro just tells the AD engine Zygote not to complain
+# about the random index selection.
 
 function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
     (; u, c) = data
     u = reshape(u, size(u, 1), :)
     c = reshape(c, size(c, 1), :)
     nsample = size(u, 2)
+    @assert nsample ≥ nuse
     function randloss(θ)
         i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
         uuse = Zygote.@ignore u[:, i]
@@ -452,17 +474,18 @@ function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
 end
 
 # Ideally, we want the LES simulation to produce the filtered DNS velocity
-# $\bar{u}$. We can thus alternatively minimize the a posteriori loss
-# function
+# $\bar{u}$. The a priori loss does not guarantee or enforce this.
+# We can alternatively minimize the a posteriori loss function
 #
 # $$
-# L^\text{post}(\theta) = \| \bar{v}_\theta - \bar{u} \|^2.
+# L^\text{post}(\theta) = \| \bar{v}_\theta - \bar{u} \|^2,
 # $$
 #
-# This loss function contains more information about the effect of $\theta$
-# than $L^\text{prior}$. However, it has a significantly longer computational
-# chain, as it includes time stepping in addition to the neural network
-# evaluation itself. Computing the gradient with respect to $\theta$ is thus
+# where $\bar{v}_\theta$ is the solution to the LES equation for the given
+# parameters. This loss function contains more information about the effect of
+# $\theta$ than $L^\text{prior}$. However, it has a significantly longer
+# computational chain, as it includes time stepping in addition to the neural
+# network evaluation itself. Computing the gradient with respect to $\theta$ is
 # more costly, and also requires an AD-friendly time stepping scheme (which we
 # have already taken care of above). Note that it is also possible to compute
 # the gradient of the time-continuous ODE instead of the time-discretized one
@@ -514,6 +537,8 @@ function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params.
     (; u, dt) = data
     nsample = size(u, 2)
     nt = size(ubar, 3)
+    @assert nt ≥ nunroll
+    @assert nsample ≥ nuse
     function randloss(θ)
         isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
         istart = Zygote.@ignore rand(1:nt-nunroll)
@@ -616,7 +641,7 @@ end
 
 # #### Convolutional neural network architecture (CNN)
 #
-# A CNN is an interesting closure models for the following reasons:
+# A CNN is an interesting closure model for the following reasons:
 #
 # - The parameters are sparse, since the kernels are reused for each output
 # - A convolutional layer can be seen as a discretized differential operator
@@ -786,7 +811,7 @@ length(methods(Lux.initialparameters))
 # other authors without modifying their package or being forced to "inherit"
 # their data structures (classes). This has created an interesting package
 # ecosystem. For example, [ODE
-# solvers](https://github.com/SciML/OrdinaryDiffEq.jl) can be used with funky
+# solvers](https://github.com/SciML/OrdinaryDiffEq.jl) can be used with exotic
 # number types such as `BigFloat`, dual numbers, or quaternions. [Iterative
 # solvers](https://github.com/JuliaLinearAlgebra/IterativeSolvers.jl)
 # work out of the box with different array types, including various [GPU
@@ -862,7 +887,7 @@ Keyword arguments:
 - `kmax`: Vector of cut-off wavenumbers
 - `σ`: Vector of activation functions
 - `rng`: Random number generator
-- `input_channels`: Tuple of input channel contstructors
+- `input_channels`: Tuple of input channel constructors
 
 Return `(fno, θ)`, where `fno(v, θ)` acts like a force on `v`.
 """

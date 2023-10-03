@@ -72,10 +72,10 @@ If you do not want to install Julia locally, you can run it on a Google
 cloud machine instead. This requires a Google account. Steps:
 
 1. Open [Google Colab](https://colab.research.google.com/)
-2. Log into your Google account. 
-3. Click on `File > Upload Notebook > Github` and paste the following url:
+2. Sign in to your Google account. 
+3. Click on `File > Upload Notebook > GitHub` and paste the following url:
    ```
    https://github.com/agdestein/NeuralClosure/
    ```
-   Select `burgers.ipynb`.
+   Select `generated/burgers.ipynb`.
 4. Follow the Colab instructions in the top of the notebook.
