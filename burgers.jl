@@ -12,10 +12,10 @@
 #nb # ## Running this notebook on Google Colab
 #nb #
 #nb # _This section is only needed when running on Google colab._
-#nb # _If you run this notebooke on your local machine, skip this section._
+#nb # _If you run this notebook on your local machine, skip this section._
 #nb #
 #nb # To use Julia on Google colab, we will install Julia using the official version
-#nb # manager Juliup. From the default Python kernel, we can access the shell by
+#nb # manager Juliup. From the default Python runtime, we can access the shell by
 #nb # starting a line with `!`.
 #nb  
 #nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
@@ -46,22 +46,22 @@
 #nb     ])
 #nb '''
 #nb 
-#nb # Once this is done, do the following:
+#nb # Once this cell has finished running (this may take a few minutes,
+#nb # depending on what resources Colab decides to give you), do the following:
 #nb #
 #nb # 1. Reload the browser page (`CTRL`/`CMD` + `R`)
 #nb # 2. In the top right corner of Colab, then select the Julia kernel.
-#nb #
-#nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/select.png?raw=true)
-#nb # ![](https://github.com/agdestein/NeuralNavierStokes/blob/main/assets/runtime.png?raw=true)
+#nb #    ![](https://github.com/agdestein/NeuralClosure/blob/main/assets/select.png?raw=true)
+#nb #    ![](https://github.com/agdestein/NeuralClosure/blob/main/assets/runtime.png?raw=true)
 
 # ## Preparing the simulations
 #
-# Julia comes with built in array functionality. Additional functionality is
-# provided in various packages, some of which are available in the Standard
-# Library (LinearAlgebra, Printf, Random, SparseArrays). Others are available in
-# the General Registry, and can be added using the built in package manager Pkg,
-# e.g. `using Pkg; Pkg.add("Plots")`. If you ran the Colab setup section, the
-# packages should already be added.
+# Julia comes with many built in features, including array functionality.
+# Additional functionality is provided in various packages, some of which are
+# available in the Standard Library (LinearAlgebra, Printf, Random,
+# SparseArrays). Others are available in the General Registry, and can be added
+# using the built in package manager Pkg, e.g. `using Pkg; Pkg.add("Plots")`.
+# If you ran the Colab setup section, the packages should already be added.
 
 ## using Pkg
 ## Pkg.add([
@@ -129,14 +129,16 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 # \left( u^2 \right) + \nu \frac{\partial^2 u}{\partial x^2},
 # $$
 #
-# where $\nu > 0$ is the viscosity.
+# where $\nu > 0$ is the viscosity. The Burgers equation models the velocity
+# profile of a compressible fluid, and has the particularity of creating
+# shocks, which are dampened by the viscosity.
 #
 # ### Discretization
 #
-# Consider a uniform discretization $x = \left( \frac{n}{N} \right)_{n =
-# 1}^N$, with the additional point $x_0 = 0$ overlapping with $x_N$. The step
-# size is $\Delta x = \frac{1}{N}$. Using a
-# central finite difference, we get the discrete equations
+# For simplicity, we will use a uniform discretization $x = \left( \frac{n}{N}
+# \right)_{n = 1}^N$, with the additional point $x_0 = 0$ overlapping with
+# $x_N$. The step size is $\Delta x = \frac{1}{N}$. Using a central finite
+# difference, we get the discrete equations
 #
 # $$
 # \frac{\mathrm{d} u_n}{\mathrm{d} t} = - \frac{1}{2} \frac{u_{n + 1}^2 - u_{n -
@@ -146,8 +148,9 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 # with the convention $u_0 = u_N$ and $u_{N + 1} = u_1$ (periodic extension). The
 # degrees of freedom are stored in the vector $u = (u_n)_{n = 1}^N$. In vector
 # notation, we will write this as $\frac{\mathrm{d} u}{\mathrm{d} t} = f(u)$.
-# Solving this equation for sufficiently small $\Delta x$ (large $N$) will be
-# referred to as _direct numerical simulation_ (DNS), and can be expensive.
+# Solving this equation for sufficiently small $\Delta x$ (sufficiently large
+# $N$) will be referred to as _direct numerical simulation_ (DNS), and can be
+# expensive.
 #
 # Note: This is a simple discretization, not ideal for dealing with shocks.
 
@@ -181,14 +184,17 @@ end
 # $$
 #
 # where $A \in \mathbb{R}^{s \times s}$ are the coefficients of the RK method.
-# The solution at the next outer time step $t + \Delta t$ is then
-# $u^s = u(t + \Delta t) + \mathcal{O}(\Delta t^r)$ where $r$ is the order of
-# the RK method.
+# The solution at the next outer time step $t + \Delta t$ is then $u^s = u(t +
+# \Delta t) + \mathcal{O}(\Delta t^{r + 1})$ if we start exactly from $u(t)$,
+# where $r$ is the order of the RK method. If we chain multiple steps from the
+# initial conditions $u(0)$ to a final state $u(t)$, the total error is of
+# order $\matchal{O}(\Delta t^r)$.
+#
 # A fourth order method is given by the following coefficients ($s = 4$, $r =
 # 4$):
 #
 # $$
-# a = \begin{pmatrix}
+# A = \begin{pmatrix}
 #     1 & 0 & 0 & 0 \\
 #     0 & 1 & 0 & 0 \\
 #     0 & 0 & 1 & 0 \\
@@ -227,7 +233,8 @@ end
 # to the final output `u` is obtained by passing the inputs `u₀` and
 # parameters `params` through a finite amount of computational steps, each of
 # which should have a chain rule defined and recognized in the Zygote AD
-# framework. Solving the ODE should be differentiable, as long as `f` is.
+# framework. The the ODE solution `u` should be differentiable (with respect to
+# `u₀` or `params`), as long as `f` is.
 
 function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback = 1, params...)
     t = 0.0
@@ -242,8 +249,8 @@ function solve_ode(f, u₀, dt, nt; callback = (u, t, i) -> nothing, ncallback =
     u
 end
 
-# For the initial conditions, we create a random spectrum with some spectral
-# amplitude decay profile.
+# For the initial conditions, we create a random spectrum with a spectral
+# amplitude decay profile (default: $\frac{1}{(1 + | k |)^{6/5}}$)
 
 function create_initial_conditions(
     nx,
@@ -292,7 +299,8 @@ u = solve_ode(
 )
 
 # This is typical for the Burgers equation: The initial conditions merge to
-# a shock, which may be dampened depending on the viscosity.
+# form a shock, which is eventually dampened due to the viscosity. If we let
+# the simulation go on, diffusion will take over and we get a smooth solution.
 
 # ## Discrete filtering and large eddy simulation (LES)
 #
