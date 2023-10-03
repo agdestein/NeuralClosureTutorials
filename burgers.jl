@@ -406,6 +406,191 @@ function create_data(
     data
 end
 
+# ### Choosing model parameters
+#
+# To choose $\theta$, we will minimize a loss function using an gradient
+# descent based optimization method ("train" the neural network).
+
+#-
+
+# #### Loss function
+#
+# Since the model predicts the commutator error, the obvious choice is
+# the a priori loss function
+#
+# $$
+# L^\text{prior}(\theta) = \| m(\bar{u}, \theta) - c(u, \bar{u}) \|^2.
+# $$
+#
+# This loss function has a simple computational chain, that is mostly comprised
+# of evaluating the neural network $m$ itself. Computing the derivative
+# with respect to $\theta$ is thus simple. We call this function "a priori"
+# since it only measures the error of the prediction itself, and not the effect
+# this error has on the LES solution $\bar{v}$.
+#
+# Let's start with the a priori loss. Since instability is not directly
+# detected, we add a regularization term to penalize extremely large weights.
+
+mean_squared_error(f, x, y, θ; λ) =
+    sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
+
+# We will only use a random subset (`nuse`) of all (`nsample * nt`)
+# solution snapshots at each loss evaluation. The `Zygote.@ignore` macro just
+# tells the AD engine Zygote not to complain about the random index selection.
+
+function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
+    (; u, c) = data
+    u = reshape(u, size(u, 1), :)
+    c = reshape(c, size(c, 1), :)
+    nsample = size(u, 2)
+    function randloss(θ)
+        i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
+        uuse = Zygote.@ignore u[:, i]
+        cuse = Zygote.@ignore c[:, i]
+        mean_squared_error(m, uuse, cuse, θ; λ)
+    end
+end
+
+# Ideally, we want the LES simulation to produce the filtered DNS velocity
+# $\bar{u}$. We can thus alternatively minimize the a posteriori loss
+# function
+#
+# $$
+# L^\text{post}(\theta) = \| \bar{v}_\theta - \bar{u} \|^2.
+# $$
+#
+# This loss function contains more information about the effect of $\theta$
+# than $L^\text{prior}$. However, it has a significantly longer computational
+# chain, as it includes time stepping in addition to the neural network
+# evaluation itself. Computing the gradient with respect to $\theta$ is thus
+# more costly, and also requires an AD-friendly time stepping scheme (which we
+# have already taken care of above). Note that it is also possible to compute
+# the gradient of the time-continuous ODE instead of the time-discretized one
+# as we do here. It involves solving an adjoint ODE backwards in time, which in
+# turn has to be discretized. Our approach here is therefore called
+# "discretize-then-optimize", while the adjoint ODE method is called
+# "optimize-then-discretize". The [SciML](https://github.com/sciml) time
+# steppers include both methods, as well as useful strategies for evaluating
+# them efficiently.
+#
+# For the a posteriori loss function, we provide the right hand side function
+# `model` (including closure), reference trajectories `u`, and model
+# parameters. We compute the error between the predicted and reference trajectories
+# at each time point.
+
+function trajectory_loss(model, u; dt, params...)
+    nt = size(u, 3)
+    loss = 0.0
+    v = u[:, :, 1]
+    for i = 2:nt
+        v = step_rk4(model, v, dt; params...)
+        ui = u[:, :, i]
+        loss += sum(abs2, v - ui) / sum(abs2, ui)
+    end
+    loss / (nt - 1)
+end
+
+# We also make a non-squared variant for error analysis.
+
+function trajectory_error(model, u; dt, params...)
+    nt = size(u, 3)
+    loss = 0.0
+    v = u[:, :, 1]
+    for i = 2:nt
+        v = step_rk4(model, v, dt; params...)
+        ui = u[:, :, i]
+        loss += norm(v - ui) / norm(ui)
+    end
+    loss / (nt - 1)
+end
+
+# To limit the length of the computational chain, we only unroll `nunroll`
+# time steps at each loss evaluation. The time step from which to unroll is
+# chosen at random at each evaluation, as are the initial conditions (`nuse`).
+#
+# The non-trainable parameters (e.g. $\nu$) are passed in `params`.
+
+function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params...)
+    (; u, dt) = data
+    nsample = size(u, 2)
+    nt = size(ubar, 3)
+    function randloss(θ)
+        isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
+        istart = Zygote.@ignore rand(1:nt-nunroll)
+        it = Zygote.@ignore istart:istart+nunroll
+        uuse = Zygote.@ignore u[:, isample, it]
+        trajectory_loss(model, uuse; dt, params..., θ)
+    end
+end
+
+# ### Training
+#
+# During training, we will monitor the error on the validation dataset with a
+# callback. We will plot the history of the a priori and a posteriori errors.
+
+## Initial empty history
+initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
+
+## Create callback for given model and dataset
+function create_callback(m, data)
+    (; u, c, dt, ν) = data
+    uu, cc = reshape(u, size(u, 1), :), reshape(c, size(c, 1), :)
+    e_post_ref = trajectory_error(f, u; dt, ν)
+    function callback(i, θ, state)
+        (; ihist, ehist_prior, ehist_post) = state
+        state = (;
+            ihist = vcat(ihist, i),
+            ehist_prior = vcat(ehist_prior, norm(m(uu, θ) - cc) / norm(cc)),
+            ehist_post = vcat(ehist_post, trajectory_error(g, u; dt, ν, m, θ)),
+        )
+        fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
+        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
+        plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
+        hline!(
+            fig,
+            [e_post_ref];
+            color = 2,
+            linestyle = :dash,
+            label = "A posteriori: No model",
+        )
+        plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
+        display(fig)
+        println("Iteration $i")
+        state
+    end
+end
+
+# For training, we have to initialize an optimizer and a callbackstate (lots of
+# state initilization in this session)
+
+initial_trainstate(optimiser, θ) = (;
+    opt = Optimisers.setup(optimiser, θ),
+    θ,
+    callbackstate = initial_callbackstate(),
+    istart = 0,
+)
+
+"""
+    train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
+
+Perform `niter` iterations of gradient descent on `loss(θ)` for given `optimiser`.
+Every `ncallback` iteration, call `callback(i, θ, callbackstate)` and update
+callback state, where `i` starts at `istart`.
+
+Return a named tuple `(; opt, θ, callbcackstate)` containing the updated
+optimizer state, parameters and callback state.
+"""
+function train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
+    for i = 1:niter
+        ∇ = first(gradient(loss, θ))
+        opt, θ = Optimisers.update(opt, θ, ∇)
+        i % ncallback == 0 && (callbackstate = callback(istart + i, θ, callbackstate))
+    end
+    istart += niter
+    (; opt, θ, callbackstate, istart)
+end
+
+
 # ### Model architecture
 #
 # We are free to choose the model architecture $m$. Here, we will consider two
@@ -715,191 +900,6 @@ function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u, u -> u 
         ),
         rng,
     )
-end
-
-# ### Choosing model parameters
-#
-# To choose $\theta$, we will minimize a loss function using an gradient
-# descent based optimization method ("train" the neural
-# network).
-
-#-
-
-# #### Loss function
-#
-# Since the model predicts the commutator error, the obvious choice is
-# the a priori loss function
-#
-# $$
-# L^\text{prior}(\theta) = \| m(\bar{u}, \theta) - c(u, \bar{u}) \|^2.
-# $$
-#
-# This loss function has a simple computational chain, that is mostly comprised
-# of evaluating the neural network $m$ itself. Computing the derivative
-# with respect to $\theta$ is thus simple. We call this function "a priori"
-# since it only measures the error of the prediction itself, and not the effect
-# this error has on the LES solution $\bar{v}$.
-#
-# Let's start with the a priori loss. Since instability is not directly
-# detected, we add a regularization term to penalize extremely large weights.
-
-mean_squared_error(f, x, y, θ; λ) =
-    sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
-
-# We will only use a random subset (`nuse`) of all (`nsample * nt`)
-# solution snapshots at each loss evaluation. The `Zygote.@ignore` macro just
-# tells the AD engine Zygote not to complain about the random index selection.
-
-function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
-    (; u, c) = data
-    u = reshape(u, size(u, 1), :)
-    c = reshape(c, size(c, 1), :)
-    nsample = size(u, 2)
-    function randloss(θ)
-        i = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        uuse = Zygote.@ignore u[:, i]
-        cuse = Zygote.@ignore c[:, i]
-        mean_squared_error(m, uuse, cuse, θ; λ)
-    end
-end
-
-# Ideally, we want the LES simulation to produce the filtered DNS velocity
-# $\bar{u}$. We can thus alternatively minimize the a posteriori loss
-# function
-#
-# $$
-# L^\text{post}(\theta) = \| \bar{v}_\theta - \bar{u} \|^2.
-# $$
-#
-# This loss function contains more information about the effect of $\theta$
-# than $L^\text{prior}$. However, it has a significantly longer computational
-# chain, as it includes time stepping in addition to the neural network
-# evaluation itself. Computing the gradient with respect to $\theta$ is thus
-# more costly, and also requires an AD-friendly time stepping scheme (which we
-# have already taken care of above). Note that it is also possible to compute
-# the gradient of the time-continuous ODE instead of the time-discretized one
-# as we do here. It involves solving an adjoint ODE backwards in time, which in
-# turn has to be discretized. Our approach here is therefore called
-# "discretize-then-optimize", while the adjoint ODE method is called
-# "optimize-then-discretize". The [SciML](https://github.com/sciml) time
-# steppers include both methods, as well as useful strategies for evaluating
-# them efficiently.
-#
-# For the a posteriori loss function, we provide the right hand side function
-# `model` (including closure), reference trajectories `u`, and model
-# parameters. We compute the error between the predicted and reference trajectories
-# at each time point.
-
-function trajectory_loss(model, u; dt, params...)
-    nt = size(u, 3)
-    loss = 0.0
-    v = u[:, :, 1]
-    for i = 2:nt
-        v = step_rk4(model, v, dt; params...)
-        ui = u[:, :, i]
-        loss += sum(abs2, v - ui) / sum(abs2, ui)
-    end
-    loss / (nt - 1)
-end
-
-# We also make a non-squared variant for error analysis.
-
-function trajectory_error(model, u; dt, params...)
-    nt = size(u, 3)
-    loss = 0.0
-    v = u[:, :, 1]
-    for i = 2:nt
-        v = step_rk4(model, v, dt; params...)
-        ui = u[:, :, i]
-        loss += norm(v - ui) / norm(ui)
-    end
-    loss / (nt - 1)
-end
-
-# To limit the length of the computational chain, we only unroll `nunroll`
-# time steps at each loss evaluation. The time step from which to unroll is
-# chosen at random at each evaluation, as are the initial conditions (`nuse`).
-#
-# The non-trainable parameters (e.g. $\nu$) are passed in `params`.
-
-function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params...)
-    (; u, dt) = data
-    nsample = size(u, 2)
-    nt = size(ubar, 3)
-    function randloss(θ)
-        isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        istart = Zygote.@ignore rand(1:nt-nunroll)
-        it = Zygote.@ignore istart:istart+nunroll
-        uuse = Zygote.@ignore u[:, isample, it]
-        trajectory_loss(model, uuse; dt, params..., θ)
-    end
-end
-
-# ### Training
-#
-# During training, we will monitor the error on the validation dataset with a
-# callback. We will plot the history of the a priori and a posteriori errors.
-
-## Initial empty history
-initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
-
-## Create callback for given model and dataset
-function create_callback(m, data)
-    (; u, c, dt, ν) = data
-    uu, cc = reshape(u, size(u, 1), :), reshape(c, size(c, 1), :)
-    e_post_ref = trajectory_error(f, u; dt, ν)
-    function callback(i, θ, state)
-        (; ihist, ehist_prior, ehist_post) = state
-        state = (;
-            ihist = vcat(ihist, i),
-            ehist_prior = vcat(ehist_prior, norm(m(uu, θ) - cc) / norm(cc)),
-            ehist_post = vcat(ehist_post, trajectory_error(g, u; dt, ν, m, θ)),
-        )
-        fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
-        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
-        plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
-        hline!(
-            fig,
-            [e_post_ref];
-            color = 2,
-            linestyle = :dash,
-            label = "A posteriori: No model",
-        )
-        plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
-        display(fig)
-        println("Iteration $i")
-        state
-    end
-end
-
-# For training, we have to initialize an optimizer and a callbackstate (lots of
-# state initilization in this session)
-
-initial_trainstate(optimiser, θ) = (;
-    opt = Optimisers.setup(optimiser, θ),
-    θ,
-    callbackstate = initial_callbackstate(),
-    istart = 0,
-)
-
-"""
-    train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
-
-Perform `niter` iterations of gradient descent on `loss(θ)` for given `optimiser`.
-Every `ncallback` iteration, call `callback(i, θ, callbackstate)` and update
-callback state, where `i` starts at `istart`.
-
-Return a named tuple `(; opt, θ, callbcackstate)` containing the updated
-optimizer state, parameters and callback state.
-"""
-function train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstate)
-    for i = 1:niter
-        ∇ = first(gradient(loss, θ))
-        opt, θ = Optimisers.update(opt, θ, ∇)
-        i % ncallback == 0 && (callbackstate = callback(istart + i, θ, callbackstate))
-    end
-    istart += niter
-    (; opt, θ, callbackstate, istart)
 end
 
 # ## Getting to business: Training and comparing closure models
