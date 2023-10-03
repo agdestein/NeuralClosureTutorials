@@ -1,0 +1,32 @@
+# https://github.com/stefanzweifel/git-auto-commit-action
+name: Literate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  literate:
+    name: Literate
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+
+      - name: Run Literate
+      - run: julia --project make.jl
+
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Generate markdown and notebook
