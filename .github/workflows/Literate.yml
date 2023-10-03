@@ -24,7 +24,8 @@ jobs:
         with:
           version: '1'
 
-      - run: julia -e '
+      - run: |
+          julia -e '
             using Pkg
             Pkg.add("Literate")
             include("make.jl")
