@@ -17,16 +17,16 @@
 #nb # To use Julia on Google colab, we will install Julia using the official version
 #nb # manager Juliup. From the default Python runtime, we can access the shell by
 #nb # starting a line with `!`.
-#nb  
+#nb
 #nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
-#nb  
+#nb
 #nb # We can check that Julia is successfully installed on the Colab instance.
-#nb 
+#nb
 #nb !~/.juliaup/bin/julia -e 'println("Hello")'
-#nb 
+#nb
 #nb # We now proceed to install the necessary Julia packages, including `IJulia` which
 #nb # will add the Julia notebook kernel.
-#nb 
+#nb
 #nb %%shell
 #nb ~/.juliaup/bin/julia -e '''
 #nb     using Pkg
@@ -45,7 +45,7 @@
 #nb         "Zygote",
 #nb     ])
 #nb '''
-#nb 
+#nb
 #nb # Once this cell has finished running (this may take a few minutes,
 #nb # depending on what resources Colab decides to give you), do the following:
 #nb #
@@ -137,55 +137,85 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 #
 # $$
 # \frac{\partial u}{\partial t} = - \frac{1}{2} \frac{\partial }{\partial x}
-# \left( u^2 \right) + \nu \frac{\partial^2 u}{\partial x^2},
+# \left( u^2 \right) + \mu \frac{\partial^2 u}{\partial x^2},
 # $$
 #
-# where $\nu > 0$ is the viscosity. The Burgers equation models the velocity
+# where $\mu > 0$ is the viscosity. The Burgers equation models the velocity
 # profile of a compressible fluid, and has the particularity of creating
 # shocks, which are dampened by the viscosity.
 #
 # ### Discretization
 #
 # For simplicity, we will use a uniform discretization $x = \left( \frac{n}{N}
-# \right)_{n = 1}^N$, with the additional point $x_0 = 0$ overlapping with
-# $x_N$. The step size is $\Delta x = \frac{1}{N}$. Using a central finite
-# difference, we get the discrete equations
+# \right)_{n = 1}^N$, with the additional "ghost" points $x_0 = 0$ overlapping with
+# $x_N$ and $x_{N + 1}$ overlapping with $x_1$.
+# The grid spacing is $\Delta x = \frac{1}{N}$.
+# Using a central finite difference, we get the discrete equations
 #
 # $$
 # \frac{\mathrm{d} u_n}{\mathrm{d} t} = - \frac{1}{2} \frac{u_{n + 1}^2 - u_{n -
-# 1}^2}{2 \Delta x} + \nu \frac{u_{n + 1} - 2 u_n + u_{n - 1}}{\Delta x^2},
+# 1}^2}{2 \Delta x} + \mu \frac{u_{n + 1} - 2 u_n + u_{n - 1}}{\Delta x^2}
 # $$
 #
-# with the convention $u_0 = u_N$ and $u_{N + 1} = u_1$ (periodic extension). The
-# degrees of freedom are stored in the vector $u = (u_n)_{n = 1}^N$. In vector
-# notation, we will write this as
+# for all $n \in \{1, \dots, N\}$, with the convention $u_0 = u_N$ and $u_{N +
+# 1} = u_1$ (periodic extension). The degrees of freedom are stored in the
+# vector $u = (u_n)_{n = 1}^N$. In vector notation, we will write this as
 #
 # $$
-# \frac{\mathrm{d} u}{\mathrm{d} t} = f(u).
+# \frac{\mathrm{d} u}{\mathrm{d} t} = f_\text{central}(u).
 # $$
+#
+# Note that $f_\text{central}$ is not  a good discretization for
+# dealing with shocks. Jameson [^1] proposes the following scheme instead:
+#
+# $$
+# \begin{split}
+# \frac{\mathrm{d} u_n}{\mathrm{d} t} &=
+# - \frac{\phi_{n + 1 / 2} - \phi_{n - 1 / 2}}{\Delta x}, \\
+# \phi_{n + 1 / 2} & = \frac{u_{n + 1}^2 + u_{n + 1} u_n + u_n^2}{6}
+# - \mu_{n + 1 / 2} \frac{u_{n + 1} - u_n}{\Delta x}, \\
+# \mu_{n + 1 / 2} & = \mu
+# + \Delta x \left( \frac{| u_{n + 1} + u_n |}{4}
+# - \frac{u_{n + 1} - u_n}{12} \right),
+# \end{split}
+# $$
+#
+# where $ϕ_{n + 1 / 2}$ is the numerical flux from $u_n$ to $u_{n + 1}$
+# and $\mu_{n + 1 / 2}$ is the includes the original viscosity and
+# an numerical viscosity.
+# This does not create oscillations near shocks. In vector notation,
+# we will denote its right hand side by $f_\text{shock}$.
 #
 # Solving this equation for sufficiently small $\Delta x$ (sufficiently large
 # $N$) will be referred to as _direct numerical simulation_ (DNS), and can be
-# expensive.
+# expensive. 
 #
-# Note: This is a simple discretization, not ideal for dealing with shocks.
-
-#-
-
-# We start by defining the right hand side function `f` for a vector `u`, making
+# We start by defining the right hand side function `dns` for a vector `u`, making
 # sure to account for the periodic boundaries. The macro `@.` makes sure that all
 # following operations are performed element-wise. Note that `circshift` here
 # acts along the first dimension, so `f` can be applied to multiple snapshots
 # at once (stored as columns in the matrix `u`). Note the semicolon `;` in the
 # function signature: It is used to separate positional arguments (here `u`)
-# from keyword arguments (here `ν`).
+# from keyword arguments (here `μ`).
 
-function f(u; ν)
-    N = size(u, 1)
+function f_central(u; μ)
+    Δx = 1 / size(u, 1)
     u₊ = circshift(u, -1)
     u₋ = circshift(u, 1)
-    @. -N / 4 * (u₊^2 - u₋^2) + N^2 * ν * (u₊ - 2u + u₋)
+    @. -(u₊^2 - u₋^2) / 4Δx + μ * (u₊ - 2u + u₋) / Δx^2
 end
+
+function f_shock(u; μ)
+    Δx = 1 / size(u, 1)
+    u₊ = circshift(u, -1)
+    μ₊ = @. μ + Δx * abs(u + u₊) / 4 - Δx * (u₊ - u) / 12
+    ϕ₊ = @. (u^2 + u * u₊ + u₊^2) / 6 - μ₊ * (u₊ - u) / Δx
+    ϕ₋ = circshift(ϕ₊, 1)
+    @. -(ϕ₊ - ϕ₋) / Δx
+end
+
+## ODE right hand side
+dns(u; μ) = f_shock(u; μ)
 
 # ### Time discretization
 #
@@ -224,7 +254,7 @@ end
 # any vectors, only create new ones. The AD-framework Zygote prefers it this
 # way. The splatting syntax `params...` lets us pass a variable number of
 # keyword arguments to the right hand side function `f` (for the above `f`
-# there is only one: `ν`). Similarly, `k...` splats the tuple `k`, but but now
+# there is only one: `μ`). Similarly, `k...` splats the tuple `k`, but but now
 # like a positional arguement instead of keyword arguments (without names).
 
 function step_rk4(f, u₀, dt; params...)
@@ -258,12 +288,11 @@ end
 function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback = 1, params...)
     t = 0.0
     u = u₀
+    callback(u, t, 0)
     for i = 1:nt
         t += dt
         u = step_rk4(f, u, dt; params...)
-        if i % ncallback == 0
-            callback(u, t, i)
-        end
+        i % ncallback == 0 && callback(u, t, i)
     end
     u
 end
@@ -289,34 +318,64 @@ end
 
 # ### Example simulation
 #
-# Let's test our method in action.
+# Let's test our method in action. The animation
+# syntax will create one animated gif from a collection of frames.
 
-ν = 1.0e-3
-nx = 512
+nx = 1024
 x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 ## Initial conditions (one sample vector)
-u = create_initial_conditions(nx, 1)
+u₀ = create_initial_conditions(nx, 1)
 
 ## Time stepping
+anim = Animation()
 u = solve_ode(
-    f,
-    u;
-    dt = 1.0e-3,
+    f_shock,
+    ## f_central,
+    u₀;
+    μ = 5.0e-4,
+    dt = 2.0e-4,
     nt = 2000,
-    ncallback = 20,
-    callback = (u, t, i) -> begin
-        title = @sprintf("Solution, t = %.3f", t)
-        fig = plot(x, u; xlabel = "x", title)
-        display(fig)
-        sleep(0.01) # Time for plot to render
-    end,
-    ν,
+    ncallback = 50,
+    callback = (u, t, i) -> frame(
+        anim,
+        plot(
+            x,
+            u;
+            xlabel = "x",
+            ylims = extrema(u₀),
+            title = @sprintf("Solution, t = %.3f", t)
+        ),
+    ),
 )
+gif(anim)
 
 # This is typical for the Burgers equation: The initial conditions merge to
 # form a shock, which is eventually dampened due to the viscosity. If we let
-# the simulation go on, diffusion will take over and we get a smooth solution.
+# the simulation go on, diffusion will take over and we get a smooth solution
+# and eventually $u$ becomes constant.
+
+#-
+
+# **Exercice**: Unsterstanding the Burgers equation
+#
+# The animation shows the velocity profile of a fluid.
+#
+# - In which direction is the fluid moving?
+# - Run the above cell more times. Does the velocity
+#   always move in the same direction?
+# - Find a region where $u > 0$. In what direction is the curve moving?
+# - Find a region where $u < 0$. In what direction is the curve moving?
+# - Find a point where $u = 0$. Does this point move?
+#
+# **Exercice**: Change the above resolution to `nx = 128`. Run once with `f_central`,
+# and once with `f_shock`.
+#
+# - Is there something strange with `f_central`?
+# - On which side of the shock is there a problem?
+# - Does this problem go away when you increase `nx`?
+
+#-
 
 # ## Discrete filtering and large eddy simulation (LES)
 #
@@ -325,10 +384,10 @@ u = solve_ode(
 # ($N_\text{LES}$) than the one needed to resolve all the features of the flow
 # ($N_\text{DNS}$).
 #
-# To define "large scales", we consider a discrete filter $\phi \in
+# To define "large scales", we consider a discrete filter $\Phi \in
 # \mathbb{R}^{N_\text{LES} \times N_\text{DNS}}$, averaging multiple DNS grid
 # points into LES points. The filtered velocity field is defined by $\bar{u} =
-# \phi u$. It is governed by the equation
+# \Phi u$. It is governed by the equation
 #
 # $$
 # \frac{\mathrm{d} \bar{u}}{\mathrm{d} t} = f(\bar{u}) + c(u, \bar{u}),
@@ -358,7 +417,7 @@ u = solve_ode(
 #
 # The following right hand side function includes the correction term.
 
-g(u; ν, m, θ) = f(u; ν) + m(u, θ)
+les(u; μ, m, θ) = dns(u; μ) + m(u, θ)
 
 # ### Data generation
 #
@@ -366,17 +425,9 @@ g(u; ν, m, θ) = f(u; ν) + m(u, θ)
 # commutator errors and simulation parameters for a given filter $ϕ$. We also
 # provide some default values.
 
-function create_data(
-    nsample,
-    ϕ;
-    dt = 1.0e-3,
-    nt = 1000,
-    kmax = 10,
-    decay = k -> 1 / (1 + abs(k))^1.2,
-    ν = 1.0e-3,
-)
+function create_data(nsample, Φ; μ, dt, nt, kmax = 10, decay = k -> 1 / (1 + abs(k))^1.2)
     ## Resolution
-    nx_les, nx_dns = size(ϕ)
+    nx_les, nx_dns = size(Φ)
 
     ## Grids
     x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
@@ -390,7 +441,7 @@ function create_data(
 
         ## Simulation-specific parameters
         dt,
-        ν,
+        μ,
     )
 
     ## DNS Initial conditions
@@ -398,9 +449,9 @@ function create_data(
 
     ## Save filtered solution and commutator error after each DNS time step
     function callback(u, t, i)
-        ubar = ϕ * u
+        ubar = Φ * u
         data.u[:, :, i+1] = ubar
-        data.c[:, :, i+1] = ϕ * f(u; ν) - f(ubar; ν)
+        data.c[:, :, i+1] = Φ * dns(u; μ) - dns(ubar; μ)
         if i % 10 == 0
             title = @sprintf("Solution, t = %.3f", t)
             np = min(3, nsample)
@@ -412,11 +463,8 @@ function create_data(
         end
     end
 
-    ## Save for t = 0.0 first
-    callback(u, 0.0, 0)
-
-    ## Do time stepping (save after each step)
-    solve_ode(f, u; dt, nt, callback, ncallback = 1, ν)
+    ## Do DNS time stepping (save after each step)
+    solve_ode(dns, u; μ, dt, nt, callback, ncallback = 1)
 
     ## Return data
     data
@@ -539,12 +587,12 @@ end
 # time steps at each loss evaluation. The time step from which to unroll is
 # chosen at random at each evaluation, as are the initial conditions (`nuse`).
 #
-# The non-trainable parameters (e.g. $\nu$) are passed in `params`.
+# The non-trainable parameters (e.g. $\mu$) are passed in `params`.
 
 function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params...)
     (; u, dt) = data
     nsample = size(u, 2)
-    nt = size(ubar, 3)
+    nt = size(u, 3)
     @assert nt ≥ nunroll
     @assert nsample ≥ nuse
     function randloss(θ)
@@ -566,15 +614,17 @@ initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post =
 
 ## Create callback for given model and dataset
 function create_callback(m, data)
-    (; u, c, dt, ν) = data
+    (; u, c, dt, μ) = data
     uu, cc = reshape(u, size(u, 1), :), reshape(c, size(c, 1), :)
-    e_post_ref = trajectory_error(f, u; dt, ν)
+    e_post_ref = trajectory_error(dns, u; dt, μ)
     function callback(i, θ, state)
         (; ihist, ehist_prior, ehist_post) = state
+        eprior = norm(m(uu, θ) - cc) / norm(cc)
+        epost = trajectory_error(les, u; dt, μ, m, θ)
         state = (;
             ihist = vcat(ihist, i),
-            ehist_prior = vcat(ehist_prior, norm(m(uu, θ) - cc) / norm(cc)),
-            ehist_post = vcat(ehist_post, trajectory_error(g, u; dt, ν, m, θ)),
+            ehist_prior = vcat(ehist_prior, eprior),
+            ehist_post = vcat(ehist_post, epost),
         )
         fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
         hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
@@ -588,7 +638,7 @@ function create_callback(m, data)
         )
         plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
         display(fig)
-        println("Iteration $i")
+        @printf "Iteration %d\ta priori error: %.4g\ta posteriori error: %.4g\n" i eprior epost
         state
     end
 end
@@ -660,7 +710,7 @@ end
 #
 # Note that we start by adding input channels, stored in a tuple of functions.
 # The Burgers RHS has a square term, so maybe the closure model can make use of
-# the same "structure" [^4].
+# the same "structure". See Melchers [^2].
 
 """
     create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u, u -> u .^ 2))
@@ -719,10 +769,10 @@ end
 
 # #### Fourier neural operator architecture (FNO)
 #
-# Let's implement the FNO [^3]. It is a network composed of _Fourier Layers_
-# (FL). A Fourier layer $u \mapsto w$ transforms the _function_ $u$ into the
-# _function_ $w$. It is defined by the following expression in continuous
-# physical space:
+# A Fourier neural operator [^3] is a network composed of _Fourier Layers_ (FL).
+# A Fourier layer $u \mapsto w$ transforms the continuous function $u$
+# into the contiunous function $w$.
+# It is defined by the following expression in physical space:
 #
 # $$
 # w(x) = \sigma \left( z(x) + W u(x) \right), \quad \forall x \in \Omega,
@@ -751,7 +801,7 @@ end
 # - The spectral part of a FL is chosen to be sparse in spectral space
 #   ($k_\text{max} \ll N / 2$), and would therefore dense in physical space (it
 #   can be written as a convolution stencil with radius $r = N / 2$)
-# 
+#
 # Lux lets us define
 # our own layer types. All functions should be "pure" (functional programming),
 # meaning that the same inputs should produce the same outputs. In particular,
@@ -942,7 +992,7 @@ end
 #
 # Now we set up an experiment. We need to decide on the following:
 #
-# - Problem parameter: $\nu$
+# - Problem parameter: $\mu$
 # - LES resolution
 # - DNS resolution
 # - Discrete filter
@@ -965,7 +1015,7 @@ end
 
 ## Resolution
 nx_les = 64
-nx_dns = 512
+nx_dns = 1024
 
 ## Grids
 x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
@@ -976,7 +1026,7 @@ x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
 Δx_dns = 1 / nx_dns
 
 ## Filter width
-Δϕ = 3 * Δx_les
+ΔΦ = 5 * Δx_les
 
 ## Filter kernel
 gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
@@ -984,24 +1034,24 @@ top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
 kernel = gaussian
 
 ## Discrete filter matrix (with periodic extension and threshold for sparsity)
-ϕ = sum(-1:1) do z
+Φ = sum(-1:1) do z
     d = @. x_les - x_dns' - z
-    @. kernel(Δϕ, d) * (abs(d) ≤ 3 / 2 * Δϕ)
+    @. kernel(ΔΦ, d) * (abs(d) ≤ 3 / 2 * ΔΦ)
 end
-ϕ = ϕ ./ sum(ϕ; dims = 2) ## Normalize weights
-ϕ = sparse(ϕ)
-dropzeros!(ϕ)
-heatmap(ϕ; yflip = true, xmirror = true, title = "Filter matrix")
+Φ = Φ ./ sum(Φ; dims = 2) ## Normalize weights
+Φ = sparse(Φ)
+dropzeros!(Φ)
+heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
 
 # ### Create data
 #
-# Create the training, validation, and testing datasets. 
+# Create the training, validation, and testing datasets.
 # Use a different time step for testing to detect overfitting.
 
-ν = 1.0e-3
-data_train = create_data(10, ϕ; nt = 1000, dt = 1.0e-3, ν)
-data_valid = create_data(2, ϕ; nt = 100, dt = 1.1e-3, ν)
-data_test = create_data(5, ϕ; nt = 1000, dt = 0.8e-3, ν)
+μ = 5.0e-4
+data_train = create_data(10, Φ; μ, nt = 2000, dt = 2.0e-4)
+data_valid = create_data(2, Φ; μ, nt = 500, dt = 2.3e-4)
+data_test = create_data(5, Φ; μ, nt = 1000, dt = 3.0e-4)
 
 # ### Closure models
 #
@@ -1027,7 +1077,7 @@ cnn.chain
 # Choose loss function
 
 loss = create_randloss_commutator(cnn, data_train; nuse = 50)
-## loss = create_randloss_trajectory(g, data_train; nuse = 3, nunroll = 10, ν, m = cnn)
+## loss = create_randloss_trajectory(les, data_train; nuse = 3, nunroll = 10, μ, m = cnn)
 
 # Initilize CNN training state
 
@@ -1070,7 +1120,7 @@ fno.chain
 # Choose loss function
 
 loss = create_randloss_commutator(fno, data_train; nuse = 50)
-## loss = create_randloss_trajectory(g, data_train; nuse = 3, nunroll = 10, ν, m = fno)
+# loss = create_randloss_trajectory(les, data_train; nuse = 3, nunroll = 10, μ, m = fno)
 
 trainstate = initial_trainstate(Adam(1.0e-3), θ_fno)
 
@@ -1102,82 +1152,155 @@ trainstate = train(;
 
 m = [noclosure, cnn, fno]
 θ = [θ_noclosure, θ_cnn, θ_fno]
-labels = ["0", "CNN", "FNO"]
+labels = ["m=0", "CNN", "FNO"]
 
 println("Relative a posteriori errors:")
 for i in eachindex(m)
-    e = trajectory_error(g, data_test.u; data_test.dt, ν, m = m[i], θ = θ[i])
+    e = trajectory_error(les, data_test.u; data_test.dt, μ, m = m[i], θ = θ[i])
     print(labels[i])
     print(":\t ")
     print(e)
     println()
 end
 
+# Let's also plot the LES solutions.
+
+u = data_test.u[:, 1, :]
+(; dt) = data_test
+nt = size(u, 2)
+v = zeros(nx_les, nt, length(m))
+for i in eachindex(m)
+    solve_ode(
+        les,
+        u[:, 1];
+        dt,
+        nt,
+        μ,
+        m = m[i],
+        θ = θ[i],
+        callback = (u, t, it) -> (v[:, it, i] = u),
+    )
+end
+
+## data_test is varying slowly
+plotfreq = 20
+@gif for it = 1:plotfreq:nt
+    fig = plot(;
+        ylims = extrema(u),
+        xlabel = "x",
+        title = @sprintf("Solution, t = %.3f", (it - 1) * dt)
+    )
+    plot!(fig, x_les, u[:, it]; label = "Ref")
+    for i in eachindex(m)
+        plot!(fig, x_les, v[:, it, i]; label = labels[i])
+    end
+    display(fig)
+    sleep(0.001)
+end
+
 # ## Modeling exercices
 #
 # To get confident with modeling ODE right hand sides using machine learning,
-# it can be useful to do one or more of the following exercices.
+# the following exercices can be useful.
 #
-# ### Trajectory fitting (a posteriori loss function)
+# ### 1. Trajectory fitting (a posteriori loss function)
 #
-# - Fit a closure model using the a posteriori loss function.
-# - Investigate the effect of the parameter `nunroll`. Try for example `@time
-#   randloss(θ)` for `unroll = 10` and `nunroll = 20` (execute `randloss` once
-#   first to trigger compilation).
-# - Discuss the statement "$L^\text{prior}$ and $L^\text{post}$ are almost the
-#   same when `nunroll = 1`" with your neighbour. Are they exactly the same if
-#   we use forward Euler ($u^{n + 1} = u^n + \Delta t f(u^n)$) instead of RK4?
+# 1. Fit a closure model using the a posteriori loss function.
+# 1. Investigate the effect of the parameter `nunroll`. Try for example
+#    `@time randloss(θ)` for `unroll = 10` and `nunroll = 20`
+#    (execute `randloss` once first to trigger compilation).
+# 1. Discuss the statement "$L^\text{prior}$ and $L^\text{post}$ are almost the
+#    same when `nunroll = 1`" with your neighbour. Are they exactly the same if
+#    we use forward Euler ($u^{n + 1} = u^n + \Delta t f(u^n)$) instead of RK4?
 #
-# ### Neural ODE (brute force right hand side)
+# ### 2. Naive neural closure model
 #
-# 1. Observe that, if we really want to, we can skip the term $f(\bar{u})$
+# Recreate the CNN or FNO model without the additional square input channel
+# (prior physical knowledge).
+# The input should only have one singleton channel (pass the
+# keyword argument `input_channels = (u -> u,)` to the constructor).
+# Do you expect this version to perform better or worse than with a square
+# channel?
+#
+# ### 3. Neural ODE (brute force right hand side)
+#
+# 1. Observe that, if we really wanted to, we could skip the term $f(\bar{v})$
 #    entirely, hoping that $m$ will be able to model it directly (in addition
 #    to the commutator error). The resulting model is
 #    $$
 #    \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = m(\bar{v}, \theta).
 #    $$
-#    This is known as a _Neural ODE_ [^5].
-# 1. Rewrite the function `g` such that the closure model predicts the _entire_
-#    right hand side instead of the correction only. (Comment out `f` in `g`).
-# 1. Train the CNN or FNO in this setting. Is the model able to represent the
-#    solution correctly?
+#    This is known as a _Neural ODE_ (see Chen [^4]).
+# 1. Define a model that predicts the _entire_ right hand side.
+#    This can be done by using the following little "hack":
 #
-# ### Learn the discretization
+#    - Create your model `m_entire_rhs, θ_entire_rhs = create_cnn(...)`
+#    - Define the effective closure model
+#      `m_effective(u, θ) = m_entire_rhs(u, θ) - dns(u; μ)`.
 #
-# - Make a new instance of the CNN closure, called `cnn_linear` with parameters
-#   `θ_cnn_linear`, which only has one convolutional layer.
-#   This model should still add the square input channel.
-# - Observe that the original Burgers DNS RHS $f$ can actually be expressed in
-#   its entirety using this model, i.e.
-#   $$
-#   \frac{\mathrm{d} u}{\mathrm{d} t} = f(u) = \operatorname{CNN}(u,
-#   \theta).
-#   $$
-#   - What is the kernel radius?
-#   - Should there still be a nonlinear activation function?
-#   - What is the exact expression for the model weights and bias?
-# - "Improve" the discretization $f$: Increase the kernel radius of
-#   `cnn_linear` and train the model. What does the resulting kernel stencil
-#   (`Array(θ_cnn_linear)`) look like? Does it resemble the one of $f$?
+# 1. Train the CNN or FNO for `m_effective`.
+#    Is the model able to represent the solution correctly?
 #
-# ### Naive neural closure model
+# ### 4. Learning the discretization
 #
-# Create a new instance of the CNN or FNO models, called `cnn_naive` or
-# `fno_naive`, without the additional square input channel (prior physical
-# knowledge). The input should only have one singleton channel (pass the
-# keyword argument `input_channels = (u -> u,)` to the constructor).
-# Do you expect this version to perform better or worse than with a square
-# channel?
+# 1. Make a new instance of the CNN closure, called `cnn_linear` with parameters
+#    `θ_cnn_linear`, which only has one convolutional layer.
+#    This model should still add the square input channel.
+# 1. Observe that the simple Burgers DNS RHS $f_\text{central}$ can actually
+#    be expressed in its entirety using this model, i.e.
+#    $$
+#    f_\text{central}(u) = \operatorname{CNN}(u, \theta).
+#    $$
+#
+#    - What is the kernel radius?
+#    - Should there still be a nonlinear activation function?
+#    - What is the exact expression for the model weights and bias?
+#
+# 1. "Improve" the discretization $f_\text{central}$:
+#
+#    - Redefine `dns(u; μ) = f_central(u; μ)` and recreate the data sets.
+#    - Choose a kernel radius for `cnn_linear` that is larger than the
+#      one of `f_central`.
+#    - Train the model.
+#    - What does the resulting kernel stencil (`Array(θ_cnn_linear)`) look like?
+#      Does it resemble the one of `f_central`?
+#
+# 1. Observe that if we really wanted to, we could do the same for the more
+#    complicated Burgers right hand side $f_\text{shock}$. Some extra
+#    difficulties in this version of $f$:
+#
+#    - It contains an absolute value (in the numerical viscosity)
+#    - It contais cross terms $u_n u_{n + 1}$ (instead of element-wise squares
+#      $u_n^2$)
+#
+#    If we use a CNN with two layers (instead of one) and with
+#    $\sigma(x) = \operatorname{relu}(x) = \max(0, x)$ as an activation
+#    function between the two layers, then the absolute value can be written
+#    as the sum of two $\operatorname{relu}$ functions with
+#    $|x| = \operatorname{relu}(x) + \operatorname{relu}(-x)$.
+#    Expressions on the same level without absolute value can also
+#    be written as a sum of two $\operatorname{relu}$ functions with
+#    $x = \operatorname{relu}(x) - \operatorname{relu}(-x)$.
+#    For the cross term, we just add it in the input channel layer.
+#
+# So, a simple discretization $f_\text{central}$ can be written as a one layer
+# CNN. A better discretization $f_\text{shock}$ can be written as a
+# two layer CNN... What can we do with an $n$ layer CNN?
+#
+# Final question: What is a closure model? Are we just learning a better
+# coarse discretization? Discuss with your neighbour.
 #
 # ## References
 #
-# [^3]: Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A.
-#       Stuart, and A. Anandkumar.
-#       _Fourier neural operator for parametric partial differential
-#       equations._
-#       arXiv:[2010.08895](https://arxiv.org/abs/2010.08895), 2021.
+# [^1]: Antony Jameson,
+#       _Energy Estimates for Nonlinear Conservation Laws with Applications to
+#       Solutions of the Burgers Equation and One-Dimensional Vicous Flow in a
+#       Shock Tube by Central Difference Schemes_,
+#       18th AIAA Computational Fluid Dynamics Conference,
+#       2007,
+#       <https://doi.org/10.2514/6.2007-4620>
 #
-# [^4]: Hugo Melchers, Daan Crommelin, Barry Koren, Vlado Menkovski, Benjamin
+# [^2]: Hugo Melchers, Daan Crommelin, Barry Koren, Vlado Menkovski, Benjamin
 #       Sanderse,
 #       _Comparison of neural closure models for discretised PDEs_,
 #       Computers & Mathematics with Applications,
@@ -1187,6 +1310,14 @@ end
 #       ISSN 0898-1221,
 #       <https://doi.org/10.1016/j.camwa.2023.04.030>.
 #
-# [^5]: R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud.
+# [^3]: Z. Li, N. Kovachki, K. Azizzadenesheli, B. Liu, K. Bhattacharya, A.
+#       Stuart, and A. Anandkumar.
+#       _Fourier neural operator for parametric partial differential
+#       equations._
+#       arXiv:[2010.08895](https://arxiv.org/abs/2010.08895),
+#       2021.
+#
+# [^4]: R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud.
 #       _Neural Ordinary Differential Equations_.
-#       arXiv:[1806.07366](https://arxiv.org/abs/1806.07366), 2018.
+#       arXiv:[1806.07366](https://arxiv.org/abs/1806.07366),
+#       2018.
