@@ -1,5 +1,5 @@
 ```@meta
-EditURL = "../navier_stokes_spectral.jl"
+EditURL = "navier_stokes_spectral.jl"
 ```
 
 # Neural closure models for the incompressible Navier-Stokes equations
