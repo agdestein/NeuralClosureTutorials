@@ -1,11 +1,10 @@
 using Literate
 
-files = ["burgers.jl", "navier_stokes_spectral.jl"]
-output_dir = "generated"
+cd("tutorials")
 
-ispath(output_dir) || mkpath(output_dir)
+files = ["burgers.jl", "navier_stokes_spectral.jl"]
 
 for f in files
-    Literate.notebook(f, output_dir; execute = false)
-    Literate.markdown(f, output_dir; codefence = "```julia" => "```")
+    Literate.notebook(f; execute = false)
+    Literate.markdown(f; codefence = "```julia" => "```")
 end

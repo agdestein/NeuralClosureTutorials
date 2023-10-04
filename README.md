@@ -12,9 +12,9 @@ versions are auto-generated from the Julia source files using
 
 | Burgers | Navier-Stokes |
 | :-----: | :-----------: |
-| [Source file](burgers.jl) | [Source file](navier_stokes_spectral.jl) |
-| [Markdown](generated/burgers.md) | [Markdown](generated/navier_stokes_spectral.md) |
-| [Notebook](generated/burgers.ipynb) | [Notebook](generated/navier_stokes_spectral.ipynb) |
+| [Source file](tutorials/burgers.jl) | [Source file](tutorials/navier_stokes_spectral.jl) |
+| [Markdown](tutorials/burgers.md) | [Markdown](tutorials/navier_stokes_spectral.md) |
+| [Notebook](tutorials/burgers.ipynb) | [Notebook](tutorials/navier_stokes_spectral.ipynb) |
 
 See the script [`make.jl`](./make.jl) for converting the script to markdown or
 notebook.
@@ -63,19 +63,19 @@ editor such as VSCode can also be useful. Proposed workflow:
    `Julia: Change current environment`.
    Set the environment to `NeuralClosure`. 
 1. In the file explorer (`Ctrl`/`Cmd` + `Shift` + `E`), you should see the
-   files. Open `generated/burgers.ipynb`.
+   files. Open `tutorials/burgers.ipynb`.
    Execute the notebook one cell at the time with `Shift` + `Enter`.
    Output and plots should appear below each cell.
    Start with uncommenting and executing the cell with
    `Pkg.instantiate()`, which will install the local dependencies.
 
 Note: If you do not like the notebook format, you can alternatively open the
-source script `burgers.jl` or the markdown file `generated/burgers.md`. Both
-can be executed interactively one Julia line at the time with `Shift` +
-`Enter`. Then a separate Julia REPL will pop up, and plots will appear in a
-separate plot pane. To visualize the LaTeX equations, open the markdown file
-and press `Ctrl`/`Cmd` + `Shift` + `V` to render the markdown (with equations)
-in a new pane.
+source script `tutorials/burgers.jl` or the markdown file
+`tutorials/burgers.md`. Both can be executed interactively one Julia line at
+the time with `Shift` + `Enter`. Then a separate Julia REPL will pop up, and
+plots will appear in a separate plot pane. To visualize the LaTeX equations,
+open the markdown file and press `Ctrl`/`Cmd` + `Shift` + `V` to render the
+markdown (with equations) in a new pane.
 
 ### Option 2: Running on Google Colab
 
@@ -88,5 +88,5 @@ cloud machine instead. This requires a Google account. Steps:
    ```
    https://github.com/agdestein/NeuralClosure/
    ```
-   Select `generated/burgers.ipynb`.
+   Select `tutorials/burgers.ipynb`.
 4. Follow the Colab instructions in the top of the notebook.
