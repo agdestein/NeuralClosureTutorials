@@ -181,9 +181,6 @@ function f_shock(u; μ)
     ϕ₋ = circshift(ϕ₊, 1)
     @. -(ϕ₊ - ϕ₋) / Δx
 end
-
-# ODE right hand side
-dns(u; μ) = f_shock(u; μ)
 ```
 
 ### Time discretization
@@ -224,7 +221,7 @@ any vectors, only create new ones. The AD-framework Zygote prefers it this
 way. The splatting syntax `params...` lets us pass a variable number of
 keyword arguments to the right hand side function `f` (for the above `f`
 there is only one: `μ`). Similarly, `k...` splats the tuple `k`, but but now
-like a positional arguement instead of keyword arguments (without names).
+like a positional argument instead of keyword arguments (without names).
 
 ```julia
 function step_rk4(f, u₀, dt; params...)
@@ -270,15 +267,40 @@ function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback =
 end
 ```
 
-For the initial conditions, we create a random spectrum with a spectral
-amplitude decay profile (default: $\frac{1}{(1 + | k |)^{6/5}}$)
+### Initial conditions
+
+For the initial conditions, we use the following random Fourier series:
+
+$$
+u_0(x) = \mathfrak{R} \sum_{k = -k_\text{max}}^{k_\text{max}} c_k
+\mathrm{e}^{2 \pi \mathrm{i} k x},
+$$
+
+where
+
+- $\mathfrak{R}$ denotes the real part
+- $c_k = a_k d_k \mathrm{e}^{- 2 \pi \mathrm{i} b_k}$ are random
+  Fourier series coefficients
+- $a_k \sim \mathcal{N}(0, 1)$ is a normally distributed random amplitude
+- $d_k = (1 + | k |)^{- 6 / 5}$ is a deterministic spectral decay profile,
+  so that the large scale features dominate the initial flow
+- $b_k \sim \mathcal{U}(0, 1)$ is a uniform random phase shift between 0 and 1
+- $\mathrm{e}^{2 \pi \mathrm{i} k x}$ is a sinusoidal Fourier series basis
+  function evaluated at the point $x \in \Omega$
+
+Note in particular that the constant coefficient $c_0$ ($k = 0$) is almost
+certainly non-zero, and with complex amplitude $| c_0 | = | a_0 |$.
+
+Since the same Fourier basis can be reused multiple times, we write a
+function that creates multiple initial condition samples in one go. Each
+discrete $u_0$ vector is stored as a column in the resulting matrix.
 
 ```julia
 function create_initial_conditions(
     nx,
     nsample;
     kmax = 10,
-    decay = k -> 1 / (1 + abs(k))^1.2,
+    decay = k -> (1 + abs(k))^(-6 / 5),
 )
     # Fourier basis
     basis = [exp(2π * im * k * x / nx) for x ∈ 1:nx, k ∈ -kmax:kmax]
@@ -287,6 +309,7 @@ function create_initial_conditions(
     c = [randn() * exp(-2π * im * rand()) * decay(k) for k ∈ -kmax:kmax, _ ∈ 1:nsample]
 
     # Random data samples (real-valued)
+    # Note the matrix product for summing over $k$
     real.(basis * c)
 end
 ```
@@ -296,12 +319,23 @@ end
 Let's test our method in action. The animation
 syntax will create one animated gif from a collection of frames.
 
+This is also the point where we have to provide some parameters, including
+
+- `nx`: Number of grid points
+- `μ`: Viscosity
+- `dt`: Time step increment
+- `nt`: Number of time steps (final time is `nt * dt`)
+- `ncallback`: Number of time steps between plot frames in the animation
+
 ```julia
-nx = 1024
+nx = 128
 x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 # Initial conditions (one sample vector)
 u₀ = create_initial_conditions(nx, 1)
+# u₀ = sin.(2π .* x)
+# u₀ = sin.(4π .* x)
+# u₀ = sin.(6π .* x)
 
 # Time stepping
 anim = Animation()
@@ -310,8 +344,8 @@ u = solve_ode(
     # f_central,
     u₀;
     μ = 5.0e-4,
-    dt = 2.0e-4,
-    nt = 2000,
+    dt = 1.0e-4,
+    nt = 5000,
     ncallback = 50,
     callback = (u, t, i) -> frame(
         anim,
@@ -320,6 +354,7 @@ u = solve_ode(
             u;
             xlabel = "x",
             ylims = extrema(u₀),
+            # marker = :o,
             title = @sprintf("Solution, t = %.3f", t)
         ),
     ),
@@ -332,22 +367,29 @@ form a shock, which is eventually dampened due to the viscosity. If we let
 the simulation go on, diffusion will take over and we get a smooth solution
 and eventually $u$ becomes constant.
 
-**Exercice**: Unsterstanding the Burgers equation
+#### Exercise: Understanding the Burgers equation
 
 The animation shows the velocity profile of a fluid.
 
 - In which direction is the fluid moving?
-- Run the above cell more times. Does the velocity
-  always move in the same direction?
+- Rerun the above cell a couple of times to get different random initial
+  conditions. Does the velocity always move in the same direction?
 - Find a region where $u > 0$. In what direction is the curve moving?
 - Find a region where $u < 0$. In what direction is the curve moving?
 - Find a point where $u = 0$. Does this point move?
 
-**Exercice**: Change the above resolution to `nx = 128`. Run once with `f_central`,
-and once with `f_shock`.
+#### Exercise: Understanding the discretization
+
+Choose one of the sine waves as initial conditions.
+Change the resolution to `nx = 128`.
+Run once with `f_shock` and once with `f_central`.
+You can try with and without the `marker = :o` keyeword to see
+the discrete points better.
+
+Questions:
 
 - Is there something strange with `f_central`?
-- On which side of the shock is there a problem?
+- On which side(s) of the shock is there a problem?
 - Does this problem go away when you increase `nx`?
 
 ## Discrete filtering and large eddy simulation (LES)
@@ -366,17 +408,20 @@ $$
 \frac{\mathrm{d} \bar{u}}{\mathrm{d} t} = f(\bar{u}) + c(u, \bar{u}),
 $$
 
-where $f$ is adapted to the grid of its input field ($\bar{u}$) and
+where $f$ is adapted to the grid of its input field $\bar{u}$ and
 $c(u, \bar{u}) = \overline{f(u)} - f(\bar{u})$ is the commutator error
-between the coarse grid and filtered fine grid right hand sides. To close the
-equations, we approximate the unknown commutator error using a closure model
-$m$ with parameters $\theta$:
+between the coarse grid and filtered fine grid right hand sides. Given
+$\bar{u}$ only, this commutator error is **unknown**, and the eqation
+needs a closure model.
+
+To close the equations, we approximate the unknown commutator error using a
+closure model $m$ with parameters $\theta$:
 
 $$
 m(\bar{u}, \theta) \approx c(u, \bar{u}).
 $$
 
-We thus need to make two choices: $m$ and $\theta$. While the model $m$ will
+We need to make two choices: $m$ and $\theta$. While the model $m$ will
 be chosen based on our expertise of numerical methods and machine learning,
 the parameters $\theta$ will be fitted using high fidelity simulation data.
 We can then solve the LES equation
@@ -386,9 +431,21 @@ $$
 $$
 
 where the LES solution $\bar{v}$ is an approximation to the filtered DNS
-solution $\bar{u}$.
+solution $\bar{u}$, starting from the exact initial conditions $\bar{v}(0) =
+\bar{u}(0)$.
 
-The following right hand side function includes the correction term.
+Since the 1D Burgers equation does not create "turbulence" in the same way
+as the 3D Navier-Stokes equations do, we choose to use a discretization
+that is "bad" on coarse grids (the LES grid), but still performs fine on fine
+grids (the DNS grid). This will give the neural network closure models some
+work to do.
+
+```julia
+dns(u; μ) = f_central(u; μ)
+```
+
+The following right hand side function includes the correction term, and thus
+constitutes the LES right hand side.
 
 ```julia
 les(u; μ, m, θ) = dns(u; μ) + m(u, θ)
@@ -397,11 +454,20 @@ les(u; μ, m, θ) = dns(u; μ) + m(u, θ)
 ### Data generation
 
 This generic function creates a data structure containing filtered DNS data,
-commutator errors and simulation parameters for a given filter $ϕ$. We also
-provide some default values.
+commutator errors and simulation parameters for a given filter $Φ$. We also
+provide some default values for the initial conditions.
 
 ```julia
-function create_data(nsample, Φ; μ, dt, nt, kmax = 10, decay = k -> 1 / (1 + abs(k))^1.2)
+function create_data(
+    nsample,
+    Φ;
+    μ,
+    dt,
+    nt,
+    kmax = 10,
+    decay = k -> (1 + abs(k))^(-6 / 5),
+    doplot = false,
+)
     # Resolution
     nx_les, nx_dns = size(Φ)
 
@@ -421,26 +487,30 @@ function create_data(nsample, Φ; μ, dt, nt, kmax = 10, decay = k -> 1 / (1 + a
     )
 
     # DNS Initial conditions
-    u = create_initial_conditions(nx_dns, nsample; kmax, decay)
+    u₀ = create_initial_conditions(nx_dns, nsample; kmax, decay)
 
     # Save filtered solution and commutator error after each DNS time step
     function callback(u, t, i)
         ubar = Φ * u
         data.u[:, :, i+1] = ubar
         data.c[:, :, i+1] = Φ * dns(u; μ) - dns(ubar; μ)
-        if i % 10 == 0
-            title = @sprintf("Solution, t = %.3f", t)
-            np = min(3, nsample)
-            fig = plot(; xlabel = "x", title)
-            plot!(fig, x_dns, u[:, 1:np]; color = (1:np)', linestyle = :dash, label = "u")
-            plot!(fig, x_les, ubar[:, 1:np]; color = (1:np)', label = "ubar")
-            display(fig)
-            sleep(0.001) # Time for plot to render
-        end
     end
 
     # Do DNS time stepping (save after each step)
-    solve_ode(dns, u; μ, dt, nt, callback, ncallback = 1)
+    u = solve_ode(dns, u₀; μ, dt, nt, callback, ncallback = 1)
+
+    # Display data set
+    if doplot
+        for (u, t) in ((u₀, "initial"), (u, "final"))
+            np = min(3, nsample)
+            fig = plot(; xlabel = "x", title = "Solutions at $t time")
+            for i = 1:np
+                plot!(fig, x_dns, u[:, i]; color = i, linestyle = :dash, label = "u$i")
+                plot!(fig, x_les, Φ * u[:, i]; color = i, label = "ū$i")
+            end
+            display(fig)
+        end
+    end
 
     # Return data
     data
@@ -1055,10 +1125,28 @@ Use a different time step for testing to detect overfitting.
 
 ```julia
 μ = 5.0e-4
-data_train = create_data(10, Φ; μ, nt = 2000, dt = 2.0e-4)
-data_valid = create_data(2, Φ; μ, nt = 500, dt = 2.3e-4)
-data_test = create_data(5, Φ; μ, nt = 1000, dt = 3.0e-4)
+data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
+data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
+data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
+nothing #hide
 ```
+
+For three of the training samples, we see that while the DNS solution contains shocks,
+the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
+final commutator errors:
+
+```julia
+plot(
+    data_train.c[:, 1:3, end];
+    label = ["Sample 1" "Sample 2" "Sample 3"],
+    xlabel = "x",
+    title = "Commutator errors at final time",
+)
+```
+
+The commutator errors are large near the DNS shocks, and small everywhere else.
+The job of the closure model is thus to detect and correct for the DNS shocks
+using the LES solution only.
 
 ### Closure models
 
@@ -1089,7 +1177,14 @@ Choose loss function
 
 ```julia
 loss = create_randloss_commutator(cnn, data_train; nuse = 50)
-# loss = create_randloss_trajectory(les, data_train; nuse = 3, nunroll = 10, μ, m = cnn)
+# loss = create_randloss_trajectory(
+#     les,
+#     data_train;
+#     nuse = 3,
+#     nunroll = 10,
+#     data_train.μ,
+#     m = cnn,
+# )
 ```
 
 Initilize CNN training state
@@ -1115,7 +1210,7 @@ previous training session left off.
 trainstate = train(;
     trainstate...,
     loss,
-    niter = 2000,
+    niter = 1000,
     ncallback = 20,
     callback = create_callback(cnn, data_valid),
 )
@@ -1145,11 +1240,15 @@ Choose loss function
 
 ```julia
 loss = create_randloss_commutator(fno, data_train; nuse = 50)
-```
+# loss = create_randloss_trajectory(
+#     les,
+#     data_train;
+#     nuse = 3,
+#     nunroll = 10,
+#     data_train.μ,
+#     m = fno,
+# )
 
-loss = create_randloss_trajectory(les, data_train; nuse = 3, nunroll = 10, μ, m = fno)
-
-```julia
 trainstate = initial_trainstate(Adam(1.0e-3), θ_fno)
 
 # Model warm-up: trigger compilation and get indication of complexity
@@ -1186,61 +1285,50 @@ We will now make a comparison of the three closure models (including the
 LES grid).
 
 ```julia
-m = [noclosure, cnn, fno]
-θ = [θ_noclosure, θ_cnn, θ_fno]
-labels = ["m=0", "CNN", "FNO"]
+models = [
+    (noclosure, θ_noclosure, "m=0")
+    (cnn, θ_cnn, "CNN")
+    (fno, θ_fno, "FNO")
+]
 
 println("Relative a posteriori errors:")
-for i in eachindex(m)
-    e = trajectory_error(les, data_test.u; data_test.dt, μ, m = m[i], θ = θ[i])
-    print(labels[i])
-    print(":\t ")
-    print(e)
-    println()
+for (m, θ, l) in models
+    e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
+    println("$l:\t$e")
 end
 ```
 
 Let's also plot the LES solutions.
 
 ```julia
-u = data_test.u[:, 1, :]
-(; dt) = data_test
-nt = size(u, 2)
-v = zeros(nx_les, nt, length(m))
-for i in eachindex(m)
-    solve_ode(
-        les,
-        u[:, 1];
-        dt,
-        nt,
-        μ,
-        m = m[i],
-        θ = θ[i],
-        callback = (u, t, it) -> (v[:, it, i] = u),
-    )
+(; u, dt, μ) = data_test
+u = u[:, 1, :]
+nt = size(u, 2) - 1
+v = [zeros(nx_les, nt + 1) for _ in models]
+for (model, v) in zip(models, v)
+    m, θ, _ = model
+    solve_ode(les, u[:, 1]; dt, nt, μ, m, θ, callback = (u, t, it) -> (v[:, it+1] = u))
 end
 
-# data_test is varying slowly
 plotfreq = 20
-@gif for it = 1:plotfreq:nt
+@gif for it = 1:plotfreq:nt+1
     fig = plot(;
         ylims = extrema(u),
         xlabel = "x",
         title = @sprintf("Solution, t = %.3f", (it - 1) * dt)
     )
     plot!(fig, x_les, u[:, it]; label = "Ref")
-    for i in eachindex(m)
-        plot!(fig, x_les, v[:, it, i]; label = labels[i])
+    for (model, v) in zip(models, v)
+        _, _, label = model
+        plot!(fig, x_les, v[:, it]; label)
     end
-    display(fig)
-    sleep(0.001)
 end
 ```
 
-## Modeling exercices
+## Modeling exercises
 
 To get confident with modeling ODE right hand sides using machine learning,
-the following exercices can be useful.
+the following exercises can be useful.
 
 ### 1. Trajectory fitting (a posteriori loss function)
 
