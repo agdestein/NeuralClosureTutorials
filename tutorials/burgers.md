@@ -565,11 +565,6 @@ for it = 0:5000
     if it % 50 == 0
         sol = plot(;
             ylims = (-1.0, 1.0),
-````
-
-xlabel = "x",
-
-````julia
             legend = :topright,
             title = @sprintf("Solution, t = %.3f", it * dt)
         )
