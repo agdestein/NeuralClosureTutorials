@@ -2,51 +2,51 @@
 
 #-
 
-# ## Running on Google Colab
-#
-# It seems you can get a certain number of GPU minutes for free if you have not done
-# so previously. In that case, **now** is the moment to select `Select Runtime -> T4 GPU` in
-# the top right corner (keep the Python runtime for now). This notebook also runs fine on
-# the CPU if you leave it be.
-#
-# Once the right hardware is chosen, we install Julia using the official version
-# manager Juliup.
-#
-# From the Python kernel, we can access the shell by starting a line with `!`.
-
-#nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
-
-# We can check that Julia is successfully installed on the Colab instance.
-
-#nb !/root/.juliaup/bin/julia -e 'println("Hello")'
-
-# We now proceed to install the necessary Julia packages, including `IJulia` which
-# will add the Julia notebook kernel.
-
-#nb %%shell
-#nb /root/.juliaup/bin/julia -e '''
-#nb     using Pkg
-#nb     Pkg.add(["IJulia", "Plots"])
-#nb     Pkg.add([
-#nb         "ComponentArrays",
-#nb         "CUDA",
-#nb         "FFTW",
-#nb         ## "IJulia",
-#nb         "LinearAlgebra",
-#nb         "Lux",
-#nb         "LuxCUDA",
-#nb         "NNlib",
-#nb         "Optimisers",
-#nb         ## "Plots",
-#nb         "Printf",
-#nb         "Random",
-#nb         "Zygote",
-#nb     ])
-#nb '''
-
-# Once this is done, reload the browser page. In the top right corner, then select the Julia kernel.
-
-#-
+#nb # ## Running on Google Colab
+#nb #
+#nb # It seems you can get a certain number of GPU minutes for free if you have not done
+#nb # so previously. In that case, **now** is the moment to select `Select Runtime -> T4 GPU` in
+#nb # the top right corner (keep the Python runtime for now). This notebook also runs fine on
+#nb # the CPU if you leave it be.
+#nb #
+#nb # Once the right hardware is chosen, we install Julia using the official version
+#nb # manager Juliup.
+#nb #
+#nb # From the Python kernel, we can access the shell by starting a line with `!`.
+#nb 
+#nb ##PYTHONRUNTIME !curl -fsSL https://install.julialang.org | sh -s -- --yes
+#nb 
+#nb # We can check that Julia is successfully installed on the Colab instance.
+#nb 
+#nb ##PYTHONRUNTIME !/root/.juliaup/bin/julia -e 'println("Hello")'
+#nb 
+#nb # We now proceed to install the necessary Julia packages, including `IJulia` which
+#nb # will add the Julia notebook kernel.
+#nb 
+#nb ##PYTHONRUNTIME %%shell
+#nb ##PYTHONRUNTIME /root/.juliaup/bin/julia -e '''
+#nb ##PYTHONRUNTIME     using Pkg
+#nb ##PYTHONRUNTIME     Pkg.add(["IJulia", "Plots"])
+#nb ##PYTHONRUNTIME     Pkg.add([
+#nb ##PYTHONRUNTIME         "ComponentArrays",
+#nb ##PYTHONRUNTIME         "CUDA",
+#nb ##PYTHONRUNTIME         "FFTW",
+#nb ##PYTHONRUNTIME         ## "IJulia",
+#nb ##PYTHONRUNTIME         "LinearAlgebra",
+#nb ##PYTHONRUNTIME         "Lux",
+#nb ##PYTHONRUNTIME         "LuxCUDA",
+#nb ##PYTHONRUNTIME         "NNlib",
+#nb ##PYTHONRUNTIME         "Optimisers",
+#nb ##PYTHONRUNTIME         ## "Plots",
+#nb ##PYTHONRUNTIME         "Printf",
+#nb ##PYTHONRUNTIME         "Random",
+#nb ##PYTHONRUNTIME         "Zygote",
+#nb ##PYTHONRUNTIME     ])
+#nb ##PYTHONRUNTIME '''
+#nb 
+#nb # Once this is done, reload the browser page. In the top right corner, then select the Julia kernel.
+#nb 
+#nb #-
 
 # ## The incompressible Navier-Stokes equations
 #

@@ -16,10 +16,4 @@ end
 
 cd("tutorials")
 
-files = ["burgers", "navier_stokes_spectral"]
-
-for f in files
-    # Literate.notebook(f * ".jl"; execute = false)
-    notebook_without_pythonruns(f; execute = false)
-    Literate.markdown(f * ".jl"; flavor = Literate.CommonMarkFlavor())
-end
+notebook_without_pythonruns("burgers"; name = "burgers_with_output", execute = true)

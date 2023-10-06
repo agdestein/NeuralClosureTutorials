@@ -26,11 +26,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
 
       - run: |
-          julia --project -e '
-            using Literate
-            cd("tutorials")
-            Literate.notebook("burgers.jl"; name = "burgers_with_output.ipynb")
-          '
+          julia --project make_with_outputs.jl
 
       - uses: stefanzweifel/git-auto-commit-action@v4
         with:

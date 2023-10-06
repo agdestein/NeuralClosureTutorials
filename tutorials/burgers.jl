@@ -18,40 +18,42 @@
 #nb # manager Juliup. From the default Python runtime, we can access the shell by
 #nb # starting a line with `!`.
 #nb
-#nb !curl -fsSL https://install.julialang.org | sh -s -- --yes
+#nb ##PYTHONRUNTIME !curl -fsSL https://install.julialang.org | sh -s -- --yes
 #nb
 #nb # We can check that Julia is successfully installed on the Colab instance.
 #nb
-#nb !~/.juliaup/bin/julia -e 'println("Hello")'
+#nb ##PYTHONRUNTIME !~/.juliaup/bin/julia -e 'println("Hello")'
 #nb
 #nb # We now proceed to install the necessary Julia packages, including `IJulia` which
 #nb # will add the Julia notebook kernel.
 #nb
-#nb %%shell
-#nb ~/.juliaup/bin/julia -e '''
-#nb     using Pkg
-#nb     Pkg.add([
-#nb         "ComponentArrays",
-#nb         "FFTW",
-#nb         "IJulia",
-#nb         "LinearAlgebra",
-#nb         "Lux",
-#nb         "NNlib",
-#nb         "Optimisers",
-#nb         "Plots",
-#nb         "Printf",
-#nb         "Random",
-#nb         "SparseArrays",
-#nb         "Zygote",
-#nb     ])
-#nb '''
+#nb ##PYTHONRUNTIME %%shell
+#nb ##PYTHONRUNTIME ~/.juliaup/bin/julia -e '''
+#nb ##PYTHONRUNTIME     using Pkg
+#nb ##PYTHONRUNTIME     Pkg.add([
+#nb ##PYTHONRUNTIME         "ComponentArrays",
+#nb ##PYTHONRUNTIME         "FFTW",
+#nb ##PYTHONRUNTIME         "IJulia",
+#nb ##PYTHONRUNTIME         "LinearAlgebra",
+#nb ##PYTHONRUNTIME         "Lux",
+#nb ##PYTHONRUNTIME         "NNlib",
+#nb ##PYTHONRUNTIME         "Optimisers",
+#nb ##PYTHONRUNTIME         "Plots",
+#nb ##PYTHONRUNTIME         "Printf",
+#nb ##PYTHONRUNTIME         "Random",
+#nb ##PYTHONRUNTIME         "SparseArrays",
+#nb ##PYTHONRUNTIME         "Zygote",
+#nb ##PYTHONRUNTIME     ])
+#nb ##PYTHONRUNTIME '''
 #nb
 #nb # Once this cell has finished running (this may take a few minutes,
 #nb # depending on what resources Colab decides to give you), do the following:
 #nb #
 #nb # 1. Reload the browser page (`CTRL`/`CMD` + `R`)
 #nb # 2. In the top right corner of Colab, then select the Julia kernel.
+#nb #
 #nb #    ![](https://github.com/agdestein/NeuralClosure/blob/main/assets/select.png?raw=true)
+#nb #
 #nb #    ![](https://github.com/agdestein/NeuralClosure/blob/main/assets/runtime.png?raw=true)
 
 # ## Preparing the simulations
