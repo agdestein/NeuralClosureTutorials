@@ -209,9 +209,9 @@ A fourth order method is given by the following coefficients ($s = 4$, $r =
 
 $$
 A = \begin{pmatrix}
-    1 & 0 & 0 & 0 \\
-    0 & 1 & 0 & 0 \\
-    0 & 0 & 1 & 0 \\
+    \frac{1}{2} & 0           & 0           & 0 \\
+    0           & \frac{1}{2} & 0           & 0 \\
+    0           & 0           & 1           & 0 \\
     \frac{1}{6} & \frac{2}{6} & \frac{2}{6} & \frac{1}{6}
 \end{pmatrix}.
 $$
@@ -226,8 +226,8 @@ like a positional argument instead of keyword arguments (without names).
 ```julia
 function step_rk4(f, u₀, dt; params...)
     A = [
-        1 0 0 0
-        0 1 0 0
+        1/2 0 0 0
+        0 1/2 0 0
         0 0 1 0
         1/6 2/6 2/6 1/6
     ]
@@ -775,7 +775,7 @@ the same "structure". See Melchers [^2].
 
 ```julia
 """
-    create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u, u -> u .^ 2))
+    create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
 
 Create CNN.
 
@@ -790,7 +790,7 @@ Keyword arguments:
 
 Return `(cnn, θ)`, where `cnn(v, θ)` acts like a force on `v`.
 """
-function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u, u -> u .^ 2))
+function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
     @assert channels[end] == 1 "A unique output channel is required"
 
     # Add number of input channels
@@ -1006,7 +1006,7 @@ we allow for a tuple of predetermined input channels.
 
 ```julia
 """
-    create_fno(; channels, kmax, σ, rng, input_channels = (u -> u, u -> u .^ 2))
+    create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
 
 Create FNO.
 
@@ -1020,7 +1020,7 @@ Keyword arguments:
 
 Return `(fno, θ)`, where `fno(v, θ)` acts like a force on `v`.
 """
-function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u, u -> u .^ 2))
+function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
     # Add number of input channels
     channels = [length(input_channels); channels]
 
@@ -1168,6 +1168,7 @@ cnn, θ_cnn = create_cnn(;
     channels = [8, 8, 8, 1],
     σ = [leakyrelu, leakyrelu, leakyrelu, identity],
     use_bias = [true, true, true, false],
+    input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
 cnn.chain
@@ -1231,6 +1232,7 @@ fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
     kmax = [16, 16, 16, 8],
     σ = [gelu, gelu, gelu, identity],
+    input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
 fno.chain
