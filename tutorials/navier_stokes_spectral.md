@@ -845,8 +845,6 @@ end
 ishift += ntrain
 ````
 
--
-
 ````julia
 GC.gc()
 CUDA.reclaim()
