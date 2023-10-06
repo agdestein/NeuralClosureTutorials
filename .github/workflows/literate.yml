@@ -1,0 +1,35 @@
+name: Literate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  literate:
+    name: Literate
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+
+      - run: |
+          julia -e '
+            using Pkg
+            Pkg.add("Literate")
+            include("make.jl")
+          '
+
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Autogenerate markdown and notebook

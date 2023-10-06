@@ -47,7 +47,9 @@ editor such as VSCode can also be useful. Proposed workflow:
     1. Click the button `Clone Repository`. If you do not see this button,
        there should be an instruction there instead to first install
        [Git](https://git-scm.com/downloads).
+
        ![](assets/vscode_clone.png)
+
     1. Paste the following URL:
 
        ```
