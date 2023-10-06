@@ -1,27 +1,4 @@
-```@meta
-EditURL = "navier_stokes_spectral.jl"
-```
-
 # Neural closure models for the incompressible Navier-Stokes equations
-
-## Running on Google Colab
-
-It seems you can get a certain number of GPU minutes for free if you have not done
-so previously. In that case, **now** is the moment to select `Select Runtime -> T4 GPU` in
-the top right corner (keep the Python runtime for now). This notebook also runs fine on
-the CPU if you leave it be.
-
-Once the right hardware is chosen, we install Julia using the official version
-manager Juliup.
-
-From the Python kernel, we can access the shell by starting a line with `!`.
-
-We can check that Julia is successfully installed on the Colab instance.
-
-We now proceed to install the necessary Julia packages, including `IJulia` which
-will add the Julia notebook kernel.
-
-Once this is done, reload the browser page. In the top right corner, then select the Julia kernel.
 
 ## The incompressible Navier-Stokes equations
 
@@ -117,7 +94,7 @@ $x = y = (i / n)_{i = 1}^N$, where $N = 2 K$. Using the convention of the fast F
 transform (FFT) [^2], we index the spectral fields by a vector of wave numbers $k_x = k_y = (0, 1, \dots, K -
 1, -K, -(K - 1), \dots 1) \in \mathbb{Z}^N$.
 
-```julia
+````julia
 using ComponentArrays
 using CUDA
 using FFTW
@@ -131,27 +108,27 @@ using Plots
 using Printf
 using Random
 using Zygote
-```
+````
 
 Lux likes to toss random number generators around, for reproducible science
 
-```julia
+````julia
 rng = Random.default_rng()
-```
+````
 
 We define some useful functions, starting with `zeros`.
 
-```julia
+````julia
 z = CUDA.functional() ? CUDA.zeros : (s...) -> zeros(Float32, s...)
 ArrayType = CUDA.functional() ? CuArray : Array
-```
+````
 
 This line makes sure that we don't do accidental CPU stuff while things
 should be on the GPU
 
-```julia
+````julia
 CUDA.allowscalar(false)
-```
+````
 
 Since most of the manipulations take place in spectral space, we drop the
 hats, e.g. `u` is $\hat{u}$. Also, `u` will have the shape `(N, N, 2)`.
@@ -159,7 +136,7 @@ hats, e.g. `u` is $\hat{u}$. Also, `u` will have the shape `(N, N, 2)`.
 The function `Q` computes the quadratic term.
 The `K - Kf` highest frequencies of `u` are cut-off to prevent aliasing.
 
-```julia
+````julia
 function Q(u, params)
     (; K, Kf, k) = params
     n = size(u, 1)
@@ -201,12 +178,12 @@ function Q(u, params)
 
     q
 end
-```
+````
 
 `F` computes the unprojected momentum right hand side $\hat{F}$. It also
 includes the closure term (if any).
 
-```julia
+````julia
 function F(u, params)
     (; normk, nu, f, m, θ) = params
     q = Q(u, params)
@@ -214,11 +191,11 @@ function F(u, params)
     isnothing(m) || (du += m(u, θ))
     du
 end
-```
+````
 
 The projector $P$ uses pre-assembled matrices.
 
-```julia
+````julia
 function project(u, params)
     (; Pxx, Pxy, Pyy) = params
     ux, uy = eachslice(u; dims = 3)
@@ -226,7 +203,7 @@ function project(u, params)
     duy = @. Pxy * ux + Pyy * uy
     cat(dux, duy; dims = 3)
 end
-```
+````
 
 ## Time discretization
 
@@ -261,7 +238,7 @@ The following function performs one RK4 time step. Note that we never
 modify any vectors, only create new ones. The AD-framework Zygote prefers
 it this way.
 
-```julia
+````julia
 function step_rk4(u0, params, dt)
     a = (
         (0.5f0,),
@@ -281,7 +258,7 @@ function step_rk4(u0, params, dt)
     end
     u
 end
-```
+````
 
 For plotting, the spatial vorticity can be useful. It is given by
 
@@ -297,7 +274,7 @@ $$
 
 in spectral space.
 
-```julia
+````julia
 function vorticity(u, params)
     (; k) = params
     ikx = im * k
@@ -306,11 +283,11 @@ function vorticity(u, params)
     ω = @. -iky * ux + ikx * uy
     real.(ifft(ω))
 end
-```
+````
 
 This function creates a random Gaussian force field.
 
-```julia
+````julia
 function gaussian(x; σ = 0.1f0)
     n = length(x)
     xf, yf = rand(), rand()
@@ -322,13 +299,13 @@ function gaussian(x; σ = 0.1f0)
     f = exp(im * rand() * 2.0f0π) * f ## Rotate f
     cat(real(f), imag(f); dims = 3)
 end
-```
+````
 
 For the initial conditions, we create a random spectrum with some decay.
 Note that the initial conditions are projected onto the divergence free
 space at the end.
 
-```julia
+````julia
 function create_spectrum(params; A, σ, s)
     (; x, k, K) = params
     T = eltype(x)
@@ -350,11 +327,11 @@ function random_field(params; A = 1.0f6, σ = 30.0f0, s = 5.0f0)
     u = fft(u, (1, 2))
     project(u, params)
 end
-```
+````
 
 Body force
 
-```julia
+````julia
 # f = 10 * (10 * gaussian(x) + 15 * gaussian(x) + 3 * gaussian(x))
 # heatmap(selectdim(f, 3, 1))
 # heatmap(selectdim(f, 3, 2))
@@ -370,13 +347,13 @@ Body force
 #
 # heatmap(fx)
 # heatmap(fy)
-```
+````
 
 Store paramaters and precomputed operators in a named tuple to toss around.
 Having this in a function gets useful when we later work with multiple
 resolutions.
 
-```julia
+````julia
 function create_params(
     K;
     nu,
@@ -414,28 +391,28 @@ function create_params(
 
     (; x, N, K, Kf, k, nu, normk, f, Pxx, Pxy, Pyy, m, θ)
 end
-```
+````
 
 ## Example simulation
 
 Let's test our method in action.
 
-```julia
+````julia
 params = create_params(64; nu = 0.001f0)
 
 # Initial conditions
 u = random_field(params)
-```
+````
 
 We can also check that `u` is indeed divergence free
 
-```julia
+````julia
 maximum(abs, params.k .* u[:, :, 1] .+ params.k' .* u[:, :, 2])
-```
+````
 
 Let's do some time stepping.
 
-```julia
+````julia
 t = 0.0f0
 dt = 1.0f-3
 
@@ -450,7 +427,7 @@ for i = 1:1000
         sleep(0.001) # Time for plot
     end
 end
-```
+````
 
 Well, that looks like... a fluid! In 2D, the eddies will eventually just
 fade and merge in the absence of forcing. We could of course add a force
@@ -514,7 +491,7 @@ programming"), including random number generation and state modification. The
 weights are stored in a vector outside the layer, while the layer itself
 contains information for construction the network.
 
-```julia
+````julia
 struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
     kmax::Int
     cin::Int
@@ -525,12 +502,12 @@ end
 
 FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_uniform) =
     FourierLayer(kmax, first(ch), last(ch), σ, init_weight)
-```
+````
 
 We also need to specify how to initialize the parameters and states. The
 Fourier layer does not have any hidden states (RNGs) that are modified.
 
-```julia
+````julia
 Lux.initialparameters(rng::AbstractRNG, (; kmax, cin, cout, init_weight)::FourierLayer) = (;
     spatial_weight = init_weight(rng, cout, cin),
     spectral_weights = init_weight(rng, kmax + 1, kmax + 1, cout, cin, 2),
@@ -539,7 +516,7 @@ Lux.initialstates(::AbstractRNG, ::FourierLayer) = (;)
 Lux.parameterlength((; kmax, cin, cout)::FourierLayer) =
     cout * cin + (kmax + 1)^2 * 2 * cout * cin
 Lux.statelength(::FourierLayer) = 0
-```
+````
 
 We now define how to pass inputs through Fourier layer, assuming the
 following:
@@ -547,7 +524,7 @@ following:
 - Input size: `(N, N, cin, nsample)`
 - Output size: `(N, N, cout, nsample)`
 
-```julia
+````julia
 function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     N = size(x, 1)
 
@@ -596,12 +573,12 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     # Fourier layer does not modify state
     v, state
 end
-```
+````
 
 We will use four Fourier layers, with a final dense layer.
 Since the closure is applied in spectral space, we start and end there.
 
-```julia
+````julia
 # Number of channels
 ch_fno = [2, 5, 5, 5, 2]
 
@@ -635,26 +612,26 @@ _fno = Chain(
     # Go to spectral space
     u -> fft(u, (1, 2)),
 )
-```
+````
 
 Create parameter vector and empty state
 
-```julia
+````julia
 θ_fno, state_fno = Lux.setup(rng, _fno)
 θ_fno = gpu_device()(ComponentArray(θ_fno))
 length(θ_fno)
-```
+````
 
-```julia
+````julia
 fno(v, θ) = first(_fno(v, θ, state_fno))
-```
+````
 
 #### Convolutional neural network
 
 Alternatively, we may use a CNN closure model. There should be fewer
 parameters.
 
-```julia
+````julia
 # Radius
 r_cnn = [2, 2, 2, 2]
 
@@ -687,19 +664,19 @@ _cnn = Chain(
     # Go to spectral space
     u -> fft(u, (1, 2)),
 )
-```
+````
 
 Create parameter vector and empty state
 
-```julia
+````julia
 θ_cnn, state_cnn = Lux.setup(rng, _cnn)
 θ_cnn = gpu_device()(ComponentArray(θ_cnn))
 length(θ_cnn)
-```
+````
 
-```julia
+````julia
 cnn(v, θ) = first(_cnn(v, θ, state_cnn))
-```
+````
 
 ### Choosing model parameters: loss function
 
@@ -720,7 +697,7 @@ This data-driven minimization will give us $\theta$.
 
 Random a priori loss function for stochastic gradient descent
 
-```julia
+````julia
 mean_squared_error(f, x, y, θ; λ = 1.0f-4) =
     sum(abs2, f(x, θ) - y) / sum(abs2, y) + λ * sum(abs2, θ) / length(θ)
 
@@ -734,11 +711,11 @@ function create_randloss(f, x, y; nuse = size(x, 2))
         mean_squared_error(f, xuse, yuse, θ)
     end
 end
-```
+````
 
 Random trajectory (a posteriori) loss function
 
-```julia
+````julia
 function trajectory_loss(ubar, θ; params, dt = 1.0f-3)
     nt = size(ubar, 4)
     loss = 0.0f0
@@ -760,13 +737,13 @@ function create_randloss_trajectory(ubar; params, dt, nunroll = 10)
         trajectory_loss(trajectory, θ; params, dt)
     end
 end
-```
+````
 
 ### Data generation
 
 Create some filtered DNS data (one initial condition only)
 
-```julia
+````julia
 nu = 0.001f0
 params_les = create_params(32; nu)
 params_dns = create_params(128; nu)
@@ -809,37 +786,36 @@ for i = 1:nt+1
         sleep(0.001) # Time for plot
     end
 end
-```
+````
 
 Choose closure model
 
-```julia
+````julia
 m, θ₀ = fno, θ_fno
 # m, θ₀ = cnn, θ_cnn
-```
+````
 
 Choose loss function
 
-```julia
+````julia
 randloss = create_randloss(m, v, c; nuse = 50)
 # randloss = create_randloss_trajectory(v; params = (; params_les..., m), dt = 1f-3, nunroll = 10)
-```
+````
 
 Model warm-up: trigger compilation and get indication of complexity
 
-```julia
+````julia
 randloss(θ₀)
 gradient(randloss, θ₀);
 @time randloss(θ₀);
 @time gradient(randloss, θ₀);
-nothing #hide
-```
+````
 
 ### Training
 
 We will monitor the error along the way.
 
-```julia
+````julia
 θ = θ₀
 v_test, c_test = ArrayType(v[:, :, :, end:end]), ArrayType(c[:, :, :, end:end])
 opt = Optimisers.setup(Adam(1.0f-3), θ)
@@ -848,11 +824,11 @@ ntrain = 100
 ihist = Int[]
 ehist = Float32[]
 ishift = 0
-```
+````
 
 The cell below can be repeated
 
-```julia
+````julia
 for i = 1:ntrain
     g = first(gradient(randloss, θ))
     opt, θ = Optimisers.update(opt, θ, g)
@@ -867,14 +843,14 @@ for i = 1:ntrain
     end
 end
 ishift += ntrain
-```
+````
 
 -
 
-```julia
+````julia
 GC.gc()
 CUDA.reclaim()
-```
+````
 
 # See also
 
