@@ -172,13 +172,9 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 #
 # $$
 # \begin{split}
-# \frac{\mathrm{d} u_n}{\mathrm{d} t} &=
-# - \frac{\phi_{n + 1 / 2} - \phi_{n - 1 / 2}}{\Delta x}, \\
-# \phi_{n + 1 / 2} & = \frac{u_{n + 1}^2 + u_{n + 1} u_n + u_n^2}{6}
-# - \mu_{n + 1 / 2} \frac{u_{n + 1} - u_n}{\Delta x}, \\
-# \mu_{n + 1 / 2} & = \mu
-# + \Delta x \left( \frac{| u_{n + 1} + u_n |}{4}
-# - \frac{u_{n + 1} - u_n}{12} \right),
+# \frac{\mathrm{d} u_n}{\mathrm{d} t} & = - \frac{\phi_{n + 1 / 2} - \phi_{n - 1 / 2}}{\Delta x}, \\
+# \phi_{n + 1 / 2} & = \frac{u_{n + 1}^2 + u_{n + 1} u_n + u_n^2}{6} - \mu_{n + 1 / 2} \frac{u_{n + 1} - u_n}{\Delta x}, \\
+# \mu_{n + 1 / 2} & = \mu + \Delta x \left( \frac{| u_{n + 1} + u_n |}{4} - \frac{u_{n + 1} - u_n}{12} \right),
 # \end{split}
 # $$
 #
@@ -1344,7 +1340,7 @@ gif(anim)
 # 1. Observe that the simple Burgers DNS RHS $f_\text{central}$ can actually
 #    be expressed in its entirety using this model, i.e.
 #    $$
-#    f_\text{central}(u) = \operatorname{CNN}(u, \theta).
+#    f_\text{central}(u) = \mathop{\text{CNN}}(u, \theta).
 #    $$
 #
 #    - What is the kernel radius?
@@ -1369,13 +1365,13 @@ gif(anim)
 #      $u_n^2$)
 #
 #    If we use a CNN with two layers (instead of one) and with
-#    $\sigma(x) = \operatorname{relu}(x) = \max(0, x)$ as an activation
+#    $\sigma(x) = \mathop{\text{relu}}(x) = \max(0, x)$ as an activation
 #    function between the two layers, then the absolute value can be written
-#    as the sum of two $\operatorname{relu}$ functions with
-#    $|x| = \operatorname{relu}(x) + \operatorname{relu}(-x)$.
+#    as the sum of two $\mathop{\text{relu}}$ functions with
+#    $|x| = \mathop{\text{relu}}(x) + \mathop{\text{relu}}(-x)$.
 #    Expressions on the same level without absolute value can also
-#    be written as a sum of two $\operatorname{relu}$ functions with
-#    $x = \operatorname{relu}(x) - \operatorname{relu}(-x)$.
+#    be written as a sum of two $\mathop{\text{relu}}$ functions with
+#    $x = \mathop{\text{relu}}(x) - \mathop{\text{relu}}(-x)$.
 #    For the cross term, we just add it in the input channel layer.
 #
 # So, a simple discretization $f_\text{central}$ can be written as a one layer
