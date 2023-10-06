@@ -281,7 +281,7 @@ end
 # to the final output `u` is obtained by passing the inputs `u₀` and
 # parameters `params` through a finite amount of computational steps, each of
 # which should have a chain rule defined and recognized in the Zygote AD
-# framework. The the ODE solution `u` should be differentiable (with respect to
+# framework. The ODE solution `u` should be differentiable (with respect to
 # `u₀` or `params`), as long as `f` is.
 
 function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback = 1, params...)
@@ -412,7 +412,7 @@ gif(anim)
 # Choose one of the sine waves as initial conditions.
 # Change the resolution to `nx = 128`.
 # Run once with `f_shock` and once with `f_central`.
-# You can try with and without the `marker = :o` keyeword to see
+# You can try with and without the `marker = :o` keyword to see
 # the discrete points better.
 #
 # Questions:
@@ -442,7 +442,7 @@ gif(anim)
 # where $f$ is adapted to the grid of its input field $\bar{u}$ and
 # $c(u, \bar{u}) = \overline{f(u)} - f(\bar{u})$ is the commutator error
 # between the coarse grid and filtered fine grid right hand sides. Given
-# $\bar{u}$ only, this commutator error is **unknown**, and the eqation
+# $\bar{u}$ only, this commutator error is **unknown**, and the equation
 # needs a closure model.
 #
 # To close the equations, we approximate the unknown commutator error using a
@@ -652,7 +652,7 @@ data_test = create_data(3, Φ; μ, nt = 3000, dt = 1.1e-4);
 # descent based optimization method ("train" the neural network).
 #
 # Since the model is used to predict the commutator error, the obvious choice
-# of loss function is the a priori loss function
+# of loss function is the prior loss function
 #
 # $$
 # L^\text{prior}(\theta) = \| m(\bar{u}, \theta) - c(u, \bar{u}) \|^2.
@@ -671,7 +671,7 @@ data_test = create_data(3, Φ; μ, nt = 3000, dt = 1.1e-4);
 # but we don't need to specify any of that, Zygote figures it out just fine on
 # its own.
 #
-# We call this loss function "a priori" since it only measures the error of the
+# We call this loss function "prior" since it only measures the error of the
 # prediction itself, and not the effect this error has on the LES solution
 # $\bar{v}_{\theta}$. Since instability in $\bar{v}_{\theta}$ is not directly
 # detected in this loss function, we add a regularization term to penalize
@@ -702,8 +702,8 @@ function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
 end
 
 # Ideally, we want the LES simulation to produce the filtered DNS velocity
-# $\bar{u}$. The a priori loss does not guarantee or enforce this.
-# We can alternatively minimize the a posteriori loss function
+# $\bar{u}$. The prior loss does not guarantee or enforce this.
+# We can alternatively minimize the posterior loss function
 #
 # $$
 # L^\text{post}(\theta) = \| \bar{v}_\theta - \bar{u} \|^2,
@@ -724,7 +724,7 @@ end
 # steppers include both methods, as well as useful strategies for evaluating
 # them efficiently.
 #
-# For the a posteriori loss function, we provide the right hand side function
+# For the posterior loss function, we provide the right hand side function
 # `model` (including closure), reference trajectories `u`, and model
 # parameters. We compute the error between the predicted and reference trajectories
 # at each time point.
@@ -779,25 +779,25 @@ end
 # ### Training settings
 #
 # During training, we will monitor the error on the validation dataset with a
-# callback. We will plot the history of the a priori and a posteriori errors.
+# callback. We will plot the history of the prior and posterior errors.
 
-## Initial empty history (with no-model errrors)
+## Initial empty history (with no-model errors)
 initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
 
 ## Plot convergence
 function plot_convergence(state, data)
     e_post_ref = trajectory_error(dns, data.u; data.dt, data.μ)
     fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
-    hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
-    plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
+    hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "Prior: No model")
+    plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "Prior: Model")
     hline!(
         fig,
         [e_post_ref];
         color = 2,
         linestyle = :dash,
-        label = "A posteriori: No model",
+        label = "Posterior: No model",
     )
-    plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
+    plot!(fig, state.ihist, state.ehist_post; color = 2, label = "Posterior: Model")
     fig
 end
 
@@ -815,7 +815,7 @@ function create_callback(m, data; doplot = false)
             ehist_post = vcat(ehist_post, epost),
         )
         doplot && display(plot_convergence(state, data))
-        @printf "Iteration %d,\t\ta priori error: %.4g,\t\ta posteriori error: %.4g\n" i eprior epost
+        @printf "Iteration %d,\t\tprior error: %.4g,\t\tposterior error: %.4g\n" i eprior epost
         state
     end
 end
@@ -1255,7 +1255,7 @@ plot_convergence(trainstate.callbackstate, data_valid)
 # We will now make a comparison between our closure model, the baseline "no closure" model,
 # and the reference testing data.
 
-println("Relative a posteriori errors:")
+println("Relative posterior errors:")
 e0 = trajectory_error(dns, data_test.u; data_test.dt, data_test.μ)
 e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
 println("m=0:\t$e0")
@@ -1298,9 +1298,9 @@ gif(anim)
 # To get confident with modeling ODE right hand sides using machine learning,
 # the following exercises can be useful.
 #
-# ### 1. Trajectory fitting (a posteriori loss function)
+# ### 1. Trajectory fitting (posterior loss function)
 #
-# 1. Fit a closure model using the a posteriori loss function.
+# 1. Fit a closure model using the posterior loss function.
 # 1. Investigate the effect of the parameter `n_unroll`. Try for example
 #    `@time randloss(θ)` for `n_unroll = 10` and `n_unroll = 20`
 #    (execute `randloss` once first to trigger compilation).
