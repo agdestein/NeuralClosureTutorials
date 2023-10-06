@@ -1,7 +1,3 @@
-```@meta
-EditURL = "burgers.jl"
-```
-
 # Neural closure models for the viscous Burgers equation
 
 In this tutorial, we will train neural closure models for the viscous Burgers
@@ -28,14 +24,14 @@ This file specifies an environment, which can be activated.
 You can then install the dependencies by uncommenting and running the
 following cell:
 
-```julia
+````julia
 # using Pkg
 # Pkg.instantiate()
-```
+````
 
 Alernatively, you can add them manually to your global environment:
 
-```julia
+````julia
 # using Pkg
 # Pkg.add([
 #     "ComponentArrays",
@@ -50,9 +46,9 @@ Alernatively, you can add them manually to your global environment:
 #     "SparseArrays",
 #     "Zygote",
 # ])
-```
+````
 
-```julia
+````julia
 using ComponentArrays
 using FFTW
 using LinearAlgebra
@@ -64,7 +60,7 @@ using Printf
 using Random
 using SparseArrays
 using Zygote
-```
+````
 
 Note that we have loaded the reverse mode AD framework
 [Zygote](https://github.com/FluxML/Zygote.jl). This package provides the
@@ -78,10 +74,10 @@ random number generators (RNGs) around, for reproducible science. We
 therefore need to initialize an RNG. The seed makes sure the same sequence of
 pseudo-random numbers are generated at each time the session is restarted.
 
-```julia
+````julia
 Random.seed!(123)
 rng = Random.default_rng()
-```
+````
 
 Deep learning functions usually use single precision floating point numbers
 by default, as this is preferred on GPUs. Julia itself, on the other hand, is
@@ -93,9 +89,9 @@ The only place we will encounter `Float32` in this file is in the default
 neural network weight initializers, so here is an alternative weight
 initializer using double precision.
 
-```julia
+````julia
 glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims...)
-```
+````
 
 ## The viscous Burgers equation
 
@@ -165,7 +161,7 @@ at once (stored as columns in the matrix `u`). Note the semicolon `;` in the
 function signature: It is used to separate positional arguments (here `u`)
 from keyword arguments (here `μ`).
 
-```julia
+````julia
 function f_central(u; μ)
     Δx = 1 / size(u, 1)
     u₊ = circshift(u, -1)
@@ -181,7 +177,7 @@ function f_shock(u; μ)
     ϕ₋ = circshift(ϕ₊, 1)
     @. -(ϕ₊ - ϕ₋) / Δx
 end
-```
+````
 
 ### Time discretization
 
@@ -223,7 +219,7 @@ keyword arguments to the right hand side function `f` (for the above `f`
 there is only one: `μ`). Similarly, `k...` splats the tuple `k`, but but now
 like a positional argument instead of keyword arguments (without names).
 
-```julia
+````julia
 function step_rk4(f, u₀, dt; params...)
     A = [
         1/2 0 0 0
@@ -243,7 +239,7 @@ function step_rk4(f, u₀, dt; params...)
     end
     u
 end
-```
+````
 
 Solving the ODE is done by chaining individual time steps. We here add the
 option to call a callback function after each time step. Note that the path
@@ -253,7 +249,7 @@ which should have a chain rule defined and recognized in the Zygote AD
 framework. The the ODE solution `u` should be differentiable (with respect to
 `u₀` or `params`), as long as `f` is.
 
-```julia
+````julia
 function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback = 1, params...)
     t = 0.0
     u = u₀
@@ -265,7 +261,7 @@ function solve_ode(f, u₀; dt, nt, callback = (u, t, i) -> nothing, ncallback =
     end
     u
 end
-```
+````
 
 ### Initial conditions
 
@@ -295,7 +291,7 @@ Since the same Fourier basis can be reused multiple times, we write a
 function that creates multiple initial condition samples in one go. Each
 discrete $u_0$ vector is stored as a column in the resulting matrix.
 
-```julia
+````julia
 function create_initial_conditions(
     nx,
     nsample;
@@ -312,7 +308,7 @@ function create_initial_conditions(
     # Note the matrix product for summing over $k$
     real.(basis * c)
 end
-```
+````
 
 ### Example simulation
 
@@ -327,8 +323,8 @@ This is also the point where we have to provide some parameters, including
 - `nt`: Number of time steps (final time is `nt * dt`)
 - `ncallback`: Number of time steps between plot frames in the animation
 
-```julia
-nx = 128
+````julia
+nx = 1024
 x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 # Initial conditions (one sample vector)
@@ -360,7 +356,7 @@ u = solve_ode(
     ),
 )
 gif(anim)
-```
+````
 
 This is typical for the Burgers equation: The initial conditions merge to
 form a shock, which is eventually dampened due to the viscosity. If we let
@@ -392,7 +388,7 @@ Questions:
 - On which side(s) of the shock is there a problem?
 - Does this problem go away when you increase `nx`?
 
-## Discrete filtering and large eddy simulation (LES)
+## Problem set-up for large eddy simulation (LES) with neural networks
 
 We now assume that we are only interested in the large scale structures of the
 flow. To compute those, we would ideally like to use a coarser resolution
@@ -440,16 +436,16 @@ that is "bad" on coarse grids (the LES grid), but still performs fine on fine
 grids (the DNS grid). This will give the neural network closure models some
 work to do.
 
-```julia
+````julia
 dns(u; μ) = f_central(u; μ)
-```
+````
 
 The following right hand side function includes the correction term, and thus
 constitutes the LES right hand side.
 
-```julia
+````julia
 les(u; μ, m, θ) = dns(u; μ) + m(u, θ)
-```
+````
 
 ### Data generation
 
@@ -457,7 +453,7 @@ This generic function creates a data structure containing filtered DNS data,
 commutator errors and simulation parameters for a given filter $Φ$. We also
 provide some default values for the initial conditions.
 
-```julia
+````julia
 function create_data(
     nsample,
     Φ;
@@ -515,14 +511,96 @@ function create_data(
     # Return data
     data
 end
-```
+````
 
-### Choosing model parameters
+Now we set up an experiment. We need to decide on the following:
+
+- Problem parameter: $\mu$
+- LES resolution
+- DNS resolution
+- Discrete filter
+- Number of initial conditions
+- Simulation time: Too short, and we won't have time to detect instabilities
+  created by our model; too long, and most of the data will be too smooth for
+  a closure model to be needed (due to viscosity)
+
+In addition, we will split our data into
+
+- Training data (for choosing $\theta$)
+- Validation data (just for monitoring training, choose when to stop)
+- Testing data (for testing performance on unseen data)
+
+````julia
+# Resolution
+nx_les = 64
+nx_dns = 1024
+
+# Grids
+x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
+x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
+
+# Grid sizes
+Δx_les = 1 / nx_les
+Δx_dns = 1 / nx_dns
+````
+
+We will use a Gaussian filter kernel, truncated to zero outside of $3 / 2$
+filter widths.
+
+````julia
+# Filter width
+ΔΦ = 5 * Δx_les
+
+# Filter kernel
+gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
+top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
+kernel = gaussian
+
+# Discrete filter matrix (with periodic extension and threshold for sparsity)
+Φ = sum(-1:1) do z
+    d = @. x_les - x_dns' - z
+    @. kernel(ΔΦ, d) * (abs(d) ≤ 3 / 2 * ΔΦ)
+end
+Φ = Φ ./ sum(Φ; dims = 2) ## Normalize weights
+Φ = sparse(Φ)
+dropzeros!(Φ)
+heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
+````
+
+Create the training, validation, and testing datasets.
+Use a different time step for testing to detect time step overfitting.
+
+````julia
+μ = 5.0e-4
+data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
+data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
+data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
+````
+
+For three of the training samples, we see that while the DNS solution contains shocks,
+the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
+final commutator errors:
+
+````julia
+plot(
+    data_train.c[:, 1:3, end];
+    label = ["Sample 1" "Sample 2" "Sample 3"],
+    xlabel = "x",
+    title = "Commutator errors at final time",
+)
+````
+
+The commutator errors are large near the DNS shocks, and small everywhere else.
+The job of the closure model is thus to detect and correct for the DNS shocks
+using the LES solution only.
+
+The information about our problem is now fully contained in the data sets. We
+can now choose the closure model to solve the problem.
+
+### Loss function
 
 To choose $\theta$, we will minimize a loss function using an gradient
 descent based optimization method ("train" the neural network).
-
-#### Loss function
 
 Since the model is used to predict the commutator error, the obvious choice
 of loss function is the a priori loss function
@@ -536,7 +614,7 @@ of evaluating the neural network $m$ itself. Computing the gradient with
 respect to $\theta$ is thus simple. The gradient is given by
 
 $$
-\frac{\mathrm{d} L^\text{prior}}{\mathrm{d} t}(\theta) = 2 (m(\bar{u},
+\frac{\mathrm{d} L^\text{prior}}{\mathrm{d} \theta}(\theta) = 2 (m(\bar{u},
 \theta) - c(u, \bar{u}))^\mathsf{T}
 \frac{\partial m}{\partial \theta}(\bar{u}, \theta),
 $$
@@ -550,10 +628,10 @@ $\bar{v}_{\theta}$. Since instability in $\bar{v}_{\theta}$ is not directly
 detected in this loss function, we add a regularization term to penalize
 extremely large weights.
 
-```julia
+````julia
 mean_squared_error(m, u, c, θ; λ) =
     sum(abs2, m(u, θ) - c) / sum(abs2, c) + λ * sum(abs2, θ) / length(θ)
-```
+````
 
 We will only use a random subset `nuse` of all `nsample * nt`
 solution snapshots at each loss evaluation. This random sampling creates a
@@ -562,7 +640,7 @@ using gradient descent is thus called _stochastic gradient descent_.
 The `Zygote.@ignore` macro just tells the AD engine Zygote not to complain
 about the random index selection.
 
-```julia
+````julia
 function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
     (; u, c) = data
     u = reshape(u, size(u, 1), :)
@@ -576,7 +654,7 @@ function create_randloss_commutator(m, data; nuse = 20, λ = 1.0e-8)
         mean_squared_error(m, uuse, cuse, θ; λ)
     end
 end
-```
+````
 
 Ideally, we want the LES simulation to produce the filtered DNS velocity
 $\bar{u}$. The a priori loss does not guarantee or enforce this.
@@ -606,7 +684,7 @@ For the a posteriori loss function, we provide the right hand side function
 parameters. We compute the error between the predicted and reference trajectories
 at each time point.
 
-```julia
+````julia
 function trajectory_loss(model, u; dt, params...)
     nt = size(u, 3)
     loss = 0.0
@@ -618,11 +696,11 @@ function trajectory_loss(model, u; dt, params...)
     end
     loss / (nt - 1)
 end
-```
+````
 
 We also make a non-squared variant for error analysis.
 
-```julia
+````julia
 function trajectory_error(model, u; dt, params...)
     nt = size(u, 3)
     loss = 0.0
@@ -634,45 +712,61 @@ function trajectory_error(model, u; dt, params...)
     end
     loss / (nt - 1)
 end
-```
+````
 
-To limit the length of the computational chain, we only unroll `nunroll`
+To limit the length of the computational chain, we only unroll `n_unroll`
 time steps at each loss evaluation. The time step from which to unroll is
 chosen at random at each evaluation, as are the initial conditions (`nuse`).
 
 The non-trainable parameters (e.g. $\mu$) are passed in `params`.
 
-```julia
-function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params...)
+````julia
+function create_randloss_trajectory(model, data; nuse = 1, n_unroll = 10, params...)
     (; u, dt) = data
     nsample = size(u, 2)
     nt = size(u, 3)
-    @assert nt ≥ nunroll
+    @assert nt ≥ n_unroll
     @assert nsample ≥ nuse
     function randloss(θ)
         isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        istart = Zygote.@ignore rand(1:nt-nunroll)
-        it = Zygote.@ignore istart:istart+nunroll
+        istart = Zygote.@ignore rand(1:nt-n_unroll)
+        it = Zygote.@ignore istart:istart+n_unroll
         uuse = Zygote.@ignore u[:, isample, it]
         trajectory_loss(model, uuse; dt, params..., θ)
     end
 end
-```
+````
 
-### Training
+### Training settings
 
 During training, we will monitor the error on the validation dataset with a
 callback. We will plot the history of the a priori and a posteriori errors.
 
-```julia
-# Initial empty history
+````julia
+# Initial empty history (with no-model errrors)
 initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
 
+# Plot convergence
+function plot_convergence(state, data)
+    e_post_ref = trajectory_error(dns, data.u; data.dt, data.μ)
+    fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
+    hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
+    plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
+    hline!(
+        fig,
+        [e_post_ref];
+        color = 2,
+        linestyle = :dash,
+        label = "A posteriori: No model",
+    )
+    plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
+    fig
+end
+
 # Create callback for given model and dataset
-function create_callback(m, data)
+function create_callback(m, data; doplot = false)
     (; u, c, dt, μ) = data
     uu, cc = reshape(u, size(u, 1), :), reshape(c, size(c, 1), :)
-    e_post_ref = trajectory_error(dns, u; dt, μ)
     function callback(i, θ, state)
         (; ihist, ehist_prior, ehist_post) = state
         eprior = norm(m(uu, θ) - cc) / norm(cc)
@@ -682,28 +776,17 @@ function create_callback(m, data)
             ehist_prior = vcat(ehist_prior, eprior),
             ehist_post = vcat(ehist_post, epost),
         )
-        fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
-        hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "A priori: No model")
-        plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "A priori: Model")
-        hline!(
-            fig,
-            [e_post_ref];
-            color = 2,
-            linestyle = :dash,
-            label = "A posteriori: No model",
-        )
-        plot!(fig, state.ihist, state.ehist_post; color = 2, label = "A posteriori: Model")
-        display(fig)
-        @printf "Iteration %d\ta priori error: %.4g\ta posteriori error: %.4g\n" i eprior epost
+        doplot && display(plot_convergence(state, data))
+        @printf "Iteration %d,\t\ta priori error: %.4g,\t\ta posteriori error: %.4g\n" i eprior epost
         state
     end
 end
-```
+````
 
 For training, we have to initialize an optimizer and a callbackstate (lots of
 state initilization in this session)
 
-```julia
+````julia
 initial_trainstate(optimiser, θ) = (;
     opt = Optimisers.setup(optimiser, θ),
     θ,
@@ -730,7 +813,7 @@ function train(; loss, opt, θ, istart, niter, ncallback, callback, callbackstat
     istart += niter
     (; opt, θ, callbackstate, istart)
 end
-```
+````
 
 ### Model architecture
 
@@ -740,7 +823,7 @@ initial parameters for a Lux `Chain`. Note: If the chain includes
 state-dependent layers such as `Dropout` (which modify their RNGs at each
 evaluation), this wrapper should not be used.
 
-```julia
+````julia
 function create_model(chain, rng)
     # Create parameter vector and empty state
     θ, state = Lux.setup(rng, chain)
@@ -755,7 +838,7 @@ function create_model(chain, rng)
     # Return model and initial parameters
     m, θ
 end
-```
+````
 
 #### Convolutional neural network architecture (CNN)
 
@@ -773,31 +856,45 @@ Note that we start by adding input channels, stored in a tuple of functions.
 The Burgers RHS has a square term, so maybe the closure model can make use of
 the same "structure". See Melchers [^2].
 
-```julia
+````julia
 """
-    create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
+    create_cnn(;
+        radii,
+        channels,
+        activations,
+        use_bias,
+        rng,
+        input_channels = (u -> u,),
+    )
 
 Create CNN.
 
 Keyword arguments:
 
-- `r`: Vector of kernel radii
+- `radii`: Vector of kernel radii
 - `channels`: Vector layer output channel numbers
-- `σ`: Vector of activation functions
+- `activations`: Vector of activation functions
 - `use_bias`: Vectors of indicators for using bias
 - `rng`: Random number generator
 - `input_channels`: Tuple of input channel contstructors
 
 Return `(cnn, θ)`, where `cnn(v, θ)` acts like a force on `v`.
 """
-function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
+function create_cnn(;
+    radii,
+    channels,
+    activations,
+    use_bias,
+    rng,
+    input_channels = (u -> u,),
+)
     @assert channels[end] == 1 "A unique output channel is required"
 
     # Add number of input channels
     channels = [length(input_channels); channels]
 
     # Padding length
-    padding = sum(r)
+    padding = sum(radii)
 
     # Create CNN
     create_model(
@@ -814,12 +911,12 @@ function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,)
             # Some convolutional layers
             (
                 Conv(
-                    (2 * r[i] + 1,),
+                    (2 * radii[i] + 1,),
                     channels[i] => channels[i+1],
-                    σ[i];
+                    activations[i];
                     use_bias = use_bias[i],
                     init_weight = glorot_uniform_64,
-                ) for i ∈ eachindex(r)
+                ) for i ∈ eachindex(radii)
             )...,
 
             # Remove singleton output channel
@@ -828,7 +925,7 @@ function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,)
         rng,
     )
 end
-```
+````
 
 #### Fourier neural operator architecture (FNO)
 
@@ -884,7 +981,7 @@ each activation function we give it, creating an optimized FourierLayer for
 `FourierLayer`, with a default and custom constructor (two constructor
 methods, the latter making use of the default).
 
-```julia
+````julia
 struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
     kmax::Int
     cin::Int
@@ -895,7 +992,7 @@ end
 
 FourierLayer(kmax, ch::Pair{Int,Int}; σ = identity, init_weight = glorot_uniform_64) =
     FourierLayer(kmax, first(ch), last(ch), σ, init_weight)
-```
+````
 
 We also need to specify how to initialize the parameters and states. The
 Fourier layer does not have any hidden states that are modified. The below
@@ -904,14 +1001,14 @@ used when the functions encounter `FourierLayer` inputs. For example, in our
 current environment, we have this many methods for the function
 `Lux.initialparameters` (including `Dense`, `Conv`, etc.):
 
-```julia
+````julia
 length(methods(Lux.initialparameters))
-```
+````
 
 Now, when we add our own method, there should be one more in the method
 table.
 
-```julia
+````julia
 Lux.initialparameters(rng::AbstractRNG, (; kmax, cin, cout, init_weight)::FourierLayer) = (;
     spatial_weight = init_weight(rng, cout, cin),
     spectral_weights = init_weight(rng, kmax + 1, cout, cin, 2),
@@ -931,7 +1028,7 @@ end
 
 # One more method now
 length(methods(Lux.initialparameters))
-```
+````
 
 This is one of the advantages of Julia: As users we can extend functions from
 other authors without modifying their package or being forced to "inherit"
@@ -951,7 +1048,7 @@ following:
 - Input size: `(nx, cin, nsample)`
 - Output size: `(nx, cout, nsample)`
 
-```julia
+````julia
 # This makes FourierLayers callable
 function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     nx = size(x, 1)
@@ -999,14 +1096,14 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     # Fourier layer does not modify state
     w, state
 end
-```
+````
 
 We will chain some Fourier layers, with a final dense layer. As for the CNN,
 we allow for a tuple of predetermined input channels.
 
-```julia
+````julia
 """
-    create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
+    create_fno(; channels, kmax, activations, rng, input_channels = (u -> u,))
 
 Create FNO.
 
@@ -1014,13 +1111,13 @@ Keyword arguments:
 
 - `channels`: Vector of output channel numbers
 - `kmax`: Vector of cut-off wavenumbers
-- `σ`: Vector of activation functions
+- `activations`: Vector of activation functions
 - `rng`: Random number generator
 - `input_channels`: Tuple of input channel constructors
 
 Return `(fno, θ)`, where `fno(v, θ)` acts like a force on `v`.
 """
-function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
+function create_fno(; channels, kmax, activations, rng, input_channels = (u -> u,))
     # Add number of input channels
     channels = [length(input_channels); channels]
 
@@ -1035,7 +1132,7 @@ function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
 
             # Some Fourier layers
             (
-                FourierLayer(kmax[i], channels[i] => channels[i+1]; σ = σ[i]) for
+                FourierLayer(kmax[i], channels[i] => channels[i+1]; σ = activations[i]) for
                 i ∈ eachindex(kmax)
             )...,
 
@@ -1055,242 +1152,111 @@ function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
         rng,
     )
 end
-```
+````
 
 ## Getting to business: Training and comparing closure models
 
-If you have made it this far, you will probably have noticed that we have
-not yet done any computation (apart from one anecdotical Burgers simulation).
-We have only defined functions: losses, initializers, models, training...
+We start by defining the "no closure" model, where $m = 0$.
+This is the baseline, and corresponds to coarse DNS.
 
-Now we set up an experiment. We need to decide on the following:
+````julia
+m_0, θ_0, label_0 = (u, θ) -> zero(u), nothing, "m=0"
+````
 
-- Problem parameter: $\mu$
-- LES resolution
-- DNS resolution
-- Discrete filter
-- Number of initial conditions
-- Closure model: FNO and CNN
-- Simulation time: Too short, and we won't have time to detect instabilities
-  created by our model; too long, and most of the data will be too smooth for
-  a closure model to be needed (due to viscosity)
-
-In addition, we will split our data into
-
-- Training data (for choosing $\theta$)
-- Validation data (just for monitoring training, choose when to stop)
-- Testing data (for testing performance on unseen data)
-
-### Discretization and filter
-
-We will use a Gaussian filter kernel, truncated to zero outside of $3 / 2$
-filter widths.
-
-```julia
-# Resolution
-nx_les = 64
-nx_dns = 1024
-
-# Grids
-x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
-x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
-
-# Grid sizes
-Δx_les = 1 / nx_les
-Δx_dns = 1 / nx_dns
-
-# Filter width
-ΔΦ = 5 * Δx_les
-
-# Filter kernel
-gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
-top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
-kernel = gaussian
-
-# Discrete filter matrix (with periodic extension and threshold for sparsity)
-Φ = sum(-1:1) do z
-    d = @. x_les - x_dns' - z
-    @. kernel(ΔΦ, d) * (abs(d) ≤ 3 / 2 * ΔΦ)
-end
-Φ = Φ ./ sum(Φ; dims = 2) ## Normalize weights
-Φ = sparse(Φ)
-dropzeros!(Φ)
-heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
-```
-
-### Create data
-
-Create the training, validation, and testing datasets.
-Use a different time step for testing to detect overfitting.
-
-```julia
-μ = 5.0e-4
-data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
-data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
-data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
-nothing #hide
-```
-
-For three of the training samples, we see that while the DNS solution contains shocks,
-the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
-final commutator errors:
-
-```julia
-plot(
-    data_train.c[:, 1:3, end];
-    label = ["Sample 1" "Sample 2" "Sample 3"],
-    xlabel = "x",
-    title = "Commutator errors at final time",
-)
-```
-
-The commutator errors are large near the DNS shocks, and small everywhere else.
-The job of the closure model is thus to detect and correct for the DNS shocks
-using the LES solution only.
-
-### Closure models
-
-We also include a "no closure" model (baseline for comparison).
-
-```julia
-noclosure, θ_noclosure = (u, θ) -> zero(u), nothing
-```
-
-#### Train a CNN
-
-Create CNN model. Note that the last activation is `identity`, as we don't
-want to restrict the output values. We can inspect the structure in the
+We now create a closure model. Note that the last activation is `identity`, as we
+don't want to restrict the output values. We can inspect the structure in the
 wrapped Lux `Chain`.
 
-```julia
-cnn, θ_cnn = create_cnn(;
-    r = [2, 2, 2, 2],
+````julia
+m_cnn, θ_cnn = create_cnn(;
+    radii = [2, 2, 2, 2],
     channels = [8, 8, 8, 1],
-    σ = [leakyrelu, leakyrelu, leakyrelu, identity],
+    activations = [leakyrelu, leakyrelu, leakyrelu, identity],
     use_bias = [true, true, true, false],
     input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
-cnn.chain
-```
+m_cnn.chain
+````
 
-Choose loss function
-
-```julia
-loss = create_randloss_commutator(cnn, data_train; nuse = 50)
-# loss = create_randloss_trajectory(
-#     les,
-#     data_train;
-#     nuse = 3,
-#     nunroll = 10,
-#     data_train.μ,
-#     m = cnn,
-# )
-```
-
-Initilize CNN training state
-
-```julia
-trainstate = initial_trainstate(Adam(1.0e-3), θ_cnn)
-```
-
-Model warm-up: trigger compilation and get indication of complexity
-
-```julia
-loss(θ_cnn)
-gradient(loss, θ_cnn);
-@time loss(θ_cnn);
-@time gradient(loss, θ_cnn);
-nothing #hide
-```
-
-Train the CNN. The cell below can be repeated to continue training where the
-previous training session left off.
-
-```julia
-trainstate = train(;
-    trainstate...,
-    loss,
-    niter = 1000,
-    ncallback = 20,
-    callback = create_callback(cnn, data_valid),
-)
-```
-
-Final CNN weights
-
-```julia
-θ_cnn = trainstate.θ
-```
-
-#### Train an FNO
-
-Create FNO. Like for the CNN, last activation is `identity`.
-
-```julia
+````julia
 fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
     kmax = [16, 16, 16, 8],
-    σ = [gelu, gelu, gelu, identity],
+    activations = [gelu, gelu, gelu, identity],
     input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
 fno.chain
-```
+````
+
+````julia
+m, θ, label = m_cnn, θ_cnn, "CNN"
+# m, θ, label = m_fno, θ_fno, "FNO"
+````
 
 Choose loss function
 
-```julia
-loss = create_randloss_commutator(fno, data_train; nuse = 50)
+````julia
+loss = create_randloss_commutator(m, data_train; nuse = 50)
 # loss = create_randloss_trajectory(
 #     les,
 #     data_train;
 #     nuse = 3,
-#     nunroll = 10,
+#     n_unroll = 10,
 #     data_train.μ,
-#     m = fno,
+#     m,
 # )
+````
 
-trainstate = initial_trainstate(Adam(1.0e-3), θ_fno)
+Initilize training state. Note that we have to provide an optimizer, here
+`Adam(η)` where `η` is the learning rate [^4]. This optimizer exploits the
+random nature of our loss function.
 
-# Model warm-up: trigger compilation and get indication of complexity
-loss(θ_fno);
-gradient(loss, θ_fno);
-@time loss(θ_fno);
-@time gradient(loss, θ_fno);
-nothing #hide
-```
+````julia
+trainstate = initial_trainstate(Adam(1.0e-3), θ)
+````
 
-Train the FNO. The cell below can be repeated to continue training where the
+Model warm-up: trigger compilation and get indication of complexity
+
+````julia
+loss(θ)
+gradient(loss, θ);
+@time loss(θ);
+@time gradient(loss, θ);
+````
+
+Train the model. The cell below can be repeated to continue training where the
 previous training session left off.
+If you run this in a notebook, `doplot = true` will create a lot of plots
+below the cell.
 
-```julia
+````julia
 trainstate = train(;
     trainstate...,
     loss,
     niter = 1000,
     ncallback = 20,
-    callback = create_callback(fno, data_valid),
+    callback = create_callback(m, data_valid; doplot = false),
 )
-```
+plot_convergence(trainstate.callbackstate, data_valid)
+````
 
-Final FNO weights
+Final model weights
 
-```julia
-θ_fno = trainstate.θ
-```
+````julia
+(; θ) = trainstate
+````
 
 ### Model performance
 
-We will now make a comparison of the three closure models (including the
-"no-model" where $m = 0$, which corresponds to solving the DNS equations on the
-LES grid).
+We will now make a comparison between our closure model, the baseline "no closure" model,
+and the reference testing data.
 
-```julia
+````julia
 models = [
-    (noclosure, θ_noclosure, "m=0")
-    (cnn, θ_cnn, "CNN")
-    (fno, θ_fno, "FNO")
+    (m_0, θ_0, label_0)
+    (m, θ, label)
 ]
 
 println("Relative a posteriori errors:")
@@ -1298,11 +1264,11 @@ for (m, θ, l) in models
     e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
     println("$l:\t$e")
 end
-```
+````
 
 Let's also plot the LES solutions.
 
-```julia
+````julia
 (; u, dt, μ) = data_test
 u = u[:, 1, :]
 nt = size(u, 2) - 1
@@ -1325,7 +1291,7 @@ plotfreq = 20
         plot!(fig, x_les, v[:, it]; label)
     end
 end
-```
+````
 
 ## Modeling exercises
 
@@ -1335,11 +1301,11 @@ the following exercises can be useful.
 ### 1. Trajectory fitting (a posteriori loss function)
 
 1. Fit a closure model using the a posteriori loss function.
-1. Investigate the effect of the parameter `nunroll`. Try for example
-   `@time randloss(θ)` for `unroll = 10` and `nunroll = 20`
+1. Investigate the effect of the parameter `n_unroll`. Try for example
+   `@time randloss(θ)` for `unroll = 10` and `n_unroll = 20`
    (execute `randloss` once first to trigger compilation).
 1. Discuss the statement "$L^\text{prior}$ and $L^\text{post}$ are almost the
-   same when `nunroll = 1`" with your neighbour. Are they exactly the same if
+   same when `n_unroll = 1`" with your neighbour. Are they exactly the same if
    we use forward Euler ($u^{n + 1} = u^n + \Delta t f(u^n)$) instead of RK4?
 
 ### 2. Naive neural closure model
@@ -1359,7 +1325,7 @@ channel?
    $$
    \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = m(\bar{v}, \theta).
    $$
-   This is known as a _Neural ODE_ (see Chen [^4]).
+   This is known as a _Neural ODE_ (see Chen [^5]).
 1. Define a model that predicts the _entire_ right hand side.
    This can be done by using the following little "hack":
 
@@ -1446,7 +1412,12 @@ coarse discretization? Discuss with your neighbour.
       arXiv:[2010.08895](https://arxiv.org/abs/2010.08895),
       2021.
 
-[^4]: R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud.
+[^4]: D. P. Kingma and J. Ba.
+      _Adam: A method for stochastic optimization_.
+      arxiv:[1412.6980](https://arxiv.org/abs/1412.6980),
+      2014.
+
+[^5]: R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud.
       _Neural Ordinary Differential Equations_.
       arXiv:[1806.07366](https://arxiv.org/abs/1806.07366),
       2018.
