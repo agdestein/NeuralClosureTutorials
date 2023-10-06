@@ -580,6 +580,12 @@ vbar = ubar
 dt = 1.0e-4
 anim = Animation()
 for it = 0:5000
+    ## Only needed if we are not running interactively
+    ## (since we are not inside a function)
+    ## e.g. on GitHub
+    global u
+    global ubar
+    global vbar
     ## Skip first step to get initial plot
     if it > 0
         u = step_rk4(dns, u, dt; μ)
@@ -1252,8 +1258,8 @@ plot_convergence(trainstate.callbackstate, data_valid)
 println("Relative a posteriori errors:")
 e0 = trajectory_error(dns, data_test.u; data_test.dt, data_test.μ)
 e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
-println("$label:\t$e")
 println("m=0:\t$e0")
+println("$label:\t$e")
 
 # Let's also plot the LES solutions with and without closure model
 
@@ -1264,6 +1270,11 @@ v0 = u[:, 1]
 v = u[:, 1]
 anim = Animation()
 for it = 0:nt
+    ## Only needed if we are not running interactively
+    ## (since we are not inside a function)
+    ## e.g. on GitHub
+    global v0
+    global v
     if it > 0
         v0 = step_rk4(dns, v0, dt; μ)
         v = step_rk4(les, v, dt; μ, m, θ)
@@ -1291,7 +1302,7 @@ gif(anim)
 #
 # 1. Fit a closure model using the a posteriori loss function.
 # 1. Investigate the effect of the parameter `n_unroll`. Try for example
-#    `@time randloss(θ)` for `unroll = 10` and `n_unroll = 20`
+#    `@time randloss(θ)` for `n_unroll = 10` and `n_unroll = 20`
 #    (execute `randloss` once first to trigger compilation).
 # 1. Discuss the statement "$L^\text{prior}$ and $L^\text{post}$ are almost the
 #    same when `n_unroll = 1`" with your neighbour. Are they exactly the same if
