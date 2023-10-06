@@ -248,9 +248,9 @@ of the RK method are chosen as
 
 $$
 a = \begin{pmatrix}
-    1 & 0 & 0 & 0 \\
-    0 & 1 & 0 & 0 \\
-    0 & 0 & 1 & 0 \\
+    \frac{1}{2} & 0           & 0           & 0 \\
+    0           & \frac{1}{2} & 0           & 0 \\
+    0           & 0           & 1           & 0 \\
     \frac{1}{6} & \frac{2}{6} & \frac{2}{6} & \frac{1}{6}
 \end{pmatrix}.
 $$
@@ -264,8 +264,8 @@ it this way.
 ```julia
 function step_rk4(u0, params, dt)
     a = (
-        (1.0f0,),
-        (0.0f0, 1.0f0),
+        (0.5f0,),
+        (0.0f0, 0.5f0),
         (0.0f0, 0.0f0, 1.0f0),
         (1.0f0 / 6.0f0, 2.0f0 / 6.0f0, 2.0f0 / 6.0f0, 1.0f0 / 6.0f0),
     )
