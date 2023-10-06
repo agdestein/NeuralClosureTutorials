@@ -68,13 +68,14 @@
 # If you cloned the NeuralClosure repository and run this in VSCode,
 # there should be a file called `Project.toml`, specifying dependencies.
 # This file specifies an environment, which can be activated.
+# **If you are running this locally (not on Colab)**:
 # You can then install the dependencies by uncommenting and running the
 # following cell:
 
 ## using Pkg
 ## Pkg.instantiate()
 
-# Alernatively, you can add them manually to your global environment:
+# Alernatively, you can add them manually:
 
 ## using Pkg
 ## Pkg.add([
@@ -1190,14 +1191,14 @@ m_cnn.chain
 
 #-
 
-fno, θ_fno = create_fno(;
+m_fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
     kmax = [16, 16, 16, 8],
     activations = [gelu, gelu, gelu, identity],
     input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
-fno.chain
+m_fno.chain
 
 #-
 
@@ -1216,7 +1217,7 @@ loss = create_randloss_commutator(m, data_train; nuse = 50);
 ##     m,
 ## );
 
-# Initilize training state. Note that we have to provide an optimizer, here
+# Initialize training state. Note that we have to provide an optimizer, here
 # `Adam(η)` where `η` is the learning rate [^4]. This optimizer exploits the
 # random nature of our loss function.
 
