@@ -5,9 +5,9 @@
 # use Julia for ease of use, efficiency, and writing differentiable code to
 # power scientific machine learning. This file is available as
 #
-# - a commented [Julia script](https://github.com/agdestein/NeuralClosure/blob/main/burgers.jl),
-# - a [markdown file](https://github.com/agdestein/NeuralClosure/blob/main/generated/burgers.md),
-# - a Jupyter [notebook](https://github.com/agdestein/NeuralClosure/blob/main/generated/burgers.ipynb).
+# - a commented [Julia script](https://github.com/agdestein/NeuralClosure/blob/main/tutorials/burgers.jl),
+# - a [markdown file](https://github.com/agdestein/NeuralClosure/blob/main/tutorials/burgers.md),
+# - a Jupyter [notebook](https://github.com/agdestein/NeuralClosure/blob/main/tutorials/burgers.ipynb).
 
 #nb # ## Running this notebook on Google Colab
 #nb #
