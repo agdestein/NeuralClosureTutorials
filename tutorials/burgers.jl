@@ -148,8 +148,9 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 #
 # ### Discretization
 #
-# For simplicity, we will use a uniform discretization $x = \left( \frac{n}{N}
-# \right)_{n = 1}^N$, with the additional "ghost" points $x_0 = 0$ overlapping with
+# For simplicity, we will use a uniform discretization
+# $x = \left( \frac{n}{N} \right)_{n = 1}^N$,
+# with the additional "ghost" points $x_0 = 0$ overlapping with
 # $x_N$ and $x_{N + 1}$ overlapping with $x_1$.
 # The grid spacing is $\Delta x = \frac{1}{N}$.
 # Using a central finite difference, we get the discrete equations
@@ -179,16 +180,16 @@ glorot_uniform_64(rng::AbstractRNG, dims...) = glorot_uniform(rng, Float64, dims
 # $$
 #
 # where $ϕ_{n + 1 / 2}$ is the numerical flux from $u_n$ to $u_{n + 1}$
-# and $\mu_{n + 1 / 2}$ is the includes the original viscosity and
-# an numerical viscosity.
-# This does not create oscillations near shocks. In vector notation,
-# we will denote its right hand side by $f_\text{shock}$.
+# and $\mu_{n + 1 / 2}$ includes the original viscosity and a numerical viscosity.
+# This prevents oscillations near shocks. In vector notation,
+# we will denote this right hand side by $f_\text{shock}$.
 #
-# Solving this equation for sufficiently small $\Delta x$ (sufficiently large
-# $N$) will be referred to as _direct numerical simulation_ (DNS), and can be
-# expensive.
+# Solving the equation $\frac{\mathrm{d} u}{\mathrm{d} t} = f(u)$ for sufficiently
+# small $\Delta x$ (sufficiently large $N$) will be referred to as
+# _direct numerical simulation_ (DNS). DNS can be expensive, in particular for
+# more complicated equations such as the Navier-Stokes equations in 2D/3D.
 #
-# We start by defining the right hand side function `dns` for a vector `u`, making
+# We start by defining the right hand side function $f$ for a vector $u$, making
 # sure to account for the periodic boundaries. The macro `@.` makes sure that all
 # following operations are performed element-wise. Note that `circshift` here
 # acts along the first dimension, so `f` can be applied to multiple snapshots
@@ -244,6 +245,11 @@ end
 #     \frac{1}{6} & \frac{2}{6} & \frac{2}{6} & \frac{1}{6}
 # \end{pmatrix}.
 # $$
+#
+# _Note: The Runge-Kutta coefficients are usually presented in with a shifted
+# version of our $A$, and also includes two vectors $c$ and $b$. Since our
+# system is autonomous and the RK scheme is explicit, we can write it in this
+# simple form._
 #
 # The following function performs one RK4 time step. Note that we never modify
 # any vectors, only create new ones. The AD-framework Zygote prefers it this
@@ -340,7 +346,7 @@ end
 # ### Example simulation
 #
 # Let's test our method in action. The animation
-# syntax will create one animated gif from a collection of frames.
+# syntax will create one animated GIF from a collection of frames.
 #
 # This is also the point where we have to provide some parameters, including
 #
@@ -613,7 +619,7 @@ gif(anim)
 
 # We observe the following:
 #
-# - The DNS solution $u$ contains shock, but those are not visible in the filtered
+# - The DNS solution $u$ contains shocks, but these are not visible in the filtered
 #   DNS solution $\bar{u}$.
 # - The LES solution $\bar{v}$ does try to resolve the shocks, but does a very
 #   bad job. The discretization $f_\text{central}$ is also creating oscillations.
@@ -635,18 +641,13 @@ data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4);
 data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
 data_test = create_data(3, Φ; μ, nt = 3000, dt = 1.1e-4);
 
-# The commutator errors are large near the DNS shocks, and small everywhere else.
-# The job of the closure model is thus to detect and correct for the DNS shocks
-# using the LES solution only.
-#
 # The information about our problem is now fully contained in the data sets. We
 # can now choose the closure model to solve the problem.
 
 # ### Loss function
 #
-# To choose $\theta$, we will minimize a loss function using an gradient
+# To choose $\theta$, we will minimize a loss function using a gradient
 # descent based optimization method ("train" the neural network).
-#
 # Since the model is used to predict the commutator error, the obvious choice
 # of loss function is the prior loss function
 #
@@ -668,10 +669,10 @@ data_test = create_data(3, Φ; μ, nt = 3000, dt = 1.1e-4);
 # its own.
 #
 # We call this loss function "prior" since it only measures the error of the
-# prediction itself, and not the effect this error has on the LES solution
-# $\bar{v}_{\theta}$. Since instability in $\bar{v}_{\theta}$ is not directly
-# detected in this loss function, we add a regularization term to penalize
-# extremely large weights.
+# prediction itself, and not the effect this error has on the LES
+# solution $\bar{v}_{\theta}$. Since instability in $\bar{v}_{\theta}$ is not
+# directly detected in this loss function, we add a regularization term to
+# penalize extremely large weights.
 
 mean_squared_error(m, u, c, θ; λ) =
     sum(abs2, m(u, θ) - c) / sum(abs2, c) + λ * sum(abs2, θ) / length(θ)
@@ -966,7 +967,7 @@ end
 # $$
 #
 # where $z$ is defined by its Fourier series coefficients $\hat{z}(k) = R(k)
-# \hat{u}(k)$ for all wave numbers $k \in \mathbb{Z}$ and some weight matrix
+# \hat{u}(k)$ for all wavenumbers $k \in \mathbb{Z}$ and some weight matrix
 # collection $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The
 # important part is the following choice: $R(k) = 0$ for $\| k \| >
 # k_\text{max}$ for some $k_\text{max}$. This truncation makes the FNO
@@ -975,7 +976,7 @@ end
 # discretizations.
 #
 # Note that a standard convolutional layer (CL) can also be written in spectral
-# space, where the spatial convolution operation becomes an wave number
+# space, where the spatial convolution operation becomes an wavenumber
 # element-wise product. The effective difference between the layers of a FNO
 # and CNN becomes the following:
 #
@@ -1200,12 +1201,12 @@ fno.chain
 
 #-
 
-m, θ, label = m_cnn, θ_cnn, "CNN"
-## m, θ, label = m_fno, θ_fno, "FNO"
+m, θ, label = m_cnn, θ_cnn, "CNN";
+## m, θ, label = m_fno, θ_fno, "FNO";
 
 # Choose loss function
 
-loss = create_randloss_commutator(m, data_train; nuse = 50)
+loss = create_randloss_commutator(m, data_train; nuse = 50);
 ## loss = create_randloss_trajectory(
 ##     les,
 ##     data_train;
@@ -1213,13 +1214,13 @@ loss = create_randloss_commutator(m, data_train; nuse = 50)
 ##     n_unroll = 10,
 ##     data_train.μ,
 ##     m,
-## )
+## );
 
 # Initilize training state. Note that we have to provide an optimizer, here
 # `Adam(η)` where `η` is the learning rate [^4]. This optimizer exploits the
 # random nature of our loss function.
 
-trainstate = initial_trainstate(Adam(1.0e-3), θ)
+trainstate = initial_trainstate(Adam(1.0e-3), θ);
 
 # Model warm-up: trigger compilation and get indication of complexity
 
@@ -1244,7 +1245,7 @@ plot_convergence(trainstate.callbackstate, data_valid)
 
 # Final model weights
 
-(; θ) = trainstate
+(; θ) = trainstate;
 
 # ### Model performance
 #
@@ -1318,9 +1319,11 @@ gif(anim)
 # 1. Observe that, if we really wanted to, we could skip the term $f(\bar{v})$
 #    entirely, hoping that $m$ will be able to model it directly (in addition
 #    to the commutator error). The resulting model is
+#
 #    $$
 #    \frac{\mathrm{d} \bar{v}}{\mathrm{d} t} = m(\bar{v}, \theta).
 #    $$
+#
 #    This is known as a _Neural ODE_ (see Chen [^5]).
 # 1. Define a model that predicts the _entire_ right hand side.
 #    This can be done by using the following little "hack":
@@ -1339,6 +1342,7 @@ gif(anim)
 #    This model should still add the square input channel.
 # 1. Observe that the simple Burgers DNS RHS $f_\text{central}$ can actually
 #    be expressed in its entirety using this model, i.e.
+#
 #    $$
 #    f_\text{central}(u) = \mathop{\text{CNN}}(u, \theta).
 #    $$
@@ -1349,7 +1353,6 @@ gif(anim)
 #
 # 1. "Improve" the discretization $f_\text{central}$:
 #
-#    - Redefine `dns(u; μ) = f_central(u; μ)` and recreate the data sets.
 #    - Choose a kernel radius for `cnn_linear` that is larger than the
 #      one of `f_central`.
 #    - Train the model.
@@ -1361,7 +1364,7 @@ gif(anim)
 #    difficulties in this version of $f$:
 #
 #    - It contains an absolute value (in the numerical viscosity)
-#    - It contais cross terms $u_n u_{n + 1}$ (instead of element-wise squares
+#    - It contains cross terms $u_n u_{n + 1}$ (instead of element-wise squares
 #      $u_n^2$)
 #
 #    If we use a CNN with two layers (instead of one) and with
