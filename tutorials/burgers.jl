@@ -352,7 +352,7 @@ end
 # - `nt`: Number of time steps (final time is `nt * dt`)
 # - `ncallback`: Number of time steps between plot frames in the animation
 
-nx = 128
+nx = 1024
 x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
 ## Initial conditions (one sample vector)
