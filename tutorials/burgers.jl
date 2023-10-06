@@ -484,16 +484,7 @@ les(u; μ, m, θ) = dns(u; μ) + m(u, θ)
 # commutator errors and simulation parameters for a given filter $Φ$. We also
 # provide some default values for the initial conditions.
 
-function create_data(
-    nsample,
-    Φ;
-    μ,
-    dt,
-    nt,
-    kmax = 10,
-    decay = k -> (1 + abs(k))^(-6 / 5),
-    doplot = false,
-)
+function create_data(nsample, Φ; μ, dt, nt, kmax = 10, decay = k -> (1 + abs(k))^(-6 / 5))
     ## Resolution
     nx_les, nx_dns = size(Φ)
 
@@ -524,19 +515,6 @@ function create_data(
 
     ## Do DNS time stepping (save after each step)
     u = solve_ode(dns, u₀; μ, dt, nt, callback, ncallback = 1)
-
-    ## Display data set
-    if doplot
-        for (u, t) in ((u₀, "initial"), (u, "final"))
-            np = min(3, nsample)
-            fig = plot(; xlabel = "x", title = "Solutions at $t time")
-            for i = 1:np
-                plot!(fig, x_dns, u[:, i]; color = i, linestyle = :dash, label = "u$i")
-                plot!(fig, x_les, Φ * u[:, i]; color = i, label = "ū$i")
-            end
-            display(fig)
-        end
-    end
 
     ## Return data
     data
@@ -592,24 +570,69 @@ end
 dropzeros!(Φ)
 heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
 
-# Create the training, validation, and testing datasets.
-# Use a different time step for testing to detect time step overfitting.
+# To illustrate the closure problem, we will run an LES simulation without a closure model.
+# Consider the following setup:
 
 μ = 5.0e-4
-data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
+u = sin.(6π * x_dns)
+ubar = Φ * u
+vbar = ubar
+dt = 1.0e-4
+anim = Animation()
+for it = 0:5000
+    ## Skip first step to get initial plot
+    if it > 0
+        u = step_rk4(dns, u, dt; μ)
+        vbar = step_rk4(dns, vbar, dt; μ)
+        ubar = Φ * u
+    end
+    if it % 50 == 0
+        sol = plot(;
+            ylims = (-1.0, 1.0),
+            # xlabel = "x",
+            legend = :topright,
+            title = @sprintf("Solution, t = %.3f", it * dt)
+        )
+        plot!(sol, x_dns, u; label = "u")
+        plot!(sol, x_les, ubar; label = "ū")
+        plot!(sol, x_les, vbar; label = "v̄")
+        c = plot(
+            x_les,
+            Φ * dns(u; μ) - dns(ubar; μ);
+            label = "c(u, ū)",
+            legend = :topright,
+            xlabel = "x",
+            ylims = (-10.0, 10.0),
+        )
+        fig = plot(sol, c; layout = (2, 1))
+        frame(anim, fig)
+    end
+end
+gif(anim)
+
+# We observe the following:
+#
+# - The DNS solution $u$ contains shock, but those are not visible in the filtered
+#   DNS solution $\bar{u}$.
+# - The LES solution $\bar{v}$ does try to resolve the shocks, but does a very
+#   bad job. The discretization $f_\text{central}$ is also creating oscillations.
+# - We see that there is a clear mismatch between $\bar{u}$ (target) and $\bar{v}$
+#   (LES prediction). This is because we did not take into account the commutator
+#   error (bottom curve).
+# - The commutator error is large where $u$ has a shock, and small everywhere
+#   else. The "subgrid content" for the 1D Burgers equations is the stress
+#   caused by the subgrid shocks.
+#
+# _The job of the closure model is to predict the bottom curve using the smooth
+# orange top curve only._
+#
+# We now create the training, validation, and testing datasets.
+# We use a slightly different time step for testing to detect time step overfitting.
+
+μ = 5.0e-4
+data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4);
 data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
-data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
-
-# For three of the training samples, we see that while the DNS solution contains shocks,
-# the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
-# final commutator errors:
-
-plot(
-    data_train.c[:, 1:3, end];
-    label = ["Sample 1" "Sample 2" "Sample 3"],
-    xlabel = "x",
-    title = "Commutator errors at final time",
-)
+data_test = create_data(3, Φ; μ, nt = 3000, dt = 1.1e-4);
 
 # The commutator errors are large near the DNS shocks, and small everywhere else.
 # The job of the closure model is thus to detect and correct for the DNS shocks
@@ -1149,11 +1172,6 @@ end
 
 # ## Getting to business: Training and comparing closure models
 #
-# We start by defining the "no closure" model, where $m = 0$.
-# This is the baseline, and corresponds to coarse DNS.
-
-m_0, θ_0, label_0 = (u, θ) -> zero(u), nothing, "m=0"
-
 # We now create a closure model. Note that the last activation is `identity`, as we
 # don't want to restrict the output values. We can inspect the structure in the
 # wrapped Lux `Chain`.
@@ -1232,41 +1250,38 @@ plot_convergence(trainstate.callbackstate, data_valid)
 # We will now make a comparison between our closure model, the baseline "no closure" model,
 # and the reference testing data.
 
-models = [
-    (m_0, θ_0, label_0)
-    (m, θ, label)
-]
-
 println("Relative a posteriori errors:")
-for (m, θ, l) in models
-    e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
-    println("$l:\t$e")
-end
+e0 = trajectory_error(dns, data_test.u; data_test.dt, data_test.μ)
+e = trajectory_error(les, data_test.u; data_test.dt, data_test.μ, m, θ)
+println("$label:\t$e")
+println("m=0:\t$e0")
 
-# Let's also plot the LES solutions.
+# Let's also plot the LES solutions with and without closure model
 
 (; u, dt, μ) = data_test
 u = u[:, 1, :]
 nt = size(u, 2) - 1
-v = [zeros(nx_les, nt + 1) for _ in models]
-for (model, v) in zip(models, v)
-    m, θ, _ = model
-    solve_ode(les, u[:, 1]; dt, nt, μ, m, θ, callback = (u, t, it) -> (v[:, it+1] = u))
-end
-
-plotfreq = 20
-@gif for it = 1:plotfreq:nt+1
-    fig = plot(;
-        ylims = extrema(u),
-        xlabel = "x",
-        title = @sprintf("Solution, t = %.3f", (it - 1) * dt)
-    )
-    plot!(fig, x_les, u[:, it]; label = "Ref")
-    for (model, v) in zip(models, v)
-        _, _, label = model
-        plot!(fig, x_les, v[:, it]; label)
+v0 = u[:, 1]
+v = u[:, 1]
+anim = Animation()
+for it = 0:nt
+    if it > 0
+        v0 = step_rk4(dns, v0, dt; μ)
+        v = step_rk4(les, v, dt; μ, m, θ)
+    end
+    if it % 50 == 0
+        fig = plot(;
+            ylims = extrema(u[:, 1]),
+            xlabel = "x",
+            title = @sprintf("Solution, t = %.3f", it * dt)
+        )
+        plot!(fig, x_les, u[:, it + 1]; label = "Ref")
+        plot!(fig, x_les, v0; label = "m=0")
+        plot!(fig, x_les, v; label)
+        frame(anim, fig)
     end
 end
+gif(anim)
 
 # ## Modeling exercises
 #
