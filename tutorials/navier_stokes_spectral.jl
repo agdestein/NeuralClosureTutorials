@@ -13,16 +13,16 @@
 #nb # manager Juliup.
 #nb #
 #nb # From the Python kernel, we can access the shell by starting a line with `!`.
-#nb 
+
 #nb ##PYTHONRUNTIME !curl -fsSL https://install.julialang.org | sh -s -- --yes
-#nb 
+
 #nb # We can check that Julia is successfully installed on the Colab instance.
-#nb 
+
 #nb ##PYTHONRUNTIME !/root/.juliaup/bin/julia -e 'println("Hello")'
-#nb 
+
 #nb # We now proceed to install the necessary Julia packages, including `IJulia` which
 #nb # will add the Julia notebook kernel.
-#nb 
+
 #nb ##PYTHONRUNTIME %%shell
 #nb ##PYTHONRUNTIME /root/.juliaup/bin/julia -e '''
 #nb ##PYTHONRUNTIME     using Pkg
@@ -43,10 +43,8 @@
 #nb ##PYTHONRUNTIME         "Zygote",
 #nb ##PYTHONRUNTIME     ])
 #nb ##PYTHONRUNTIME '''
-#nb 
+
 #nb # Once this is done, reload the browser page. In the top right corner, then select the Julia kernel.
-#nb 
-#nb #-
 
 # ## The incompressible Navier-Stokes equations
 #

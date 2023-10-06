@@ -17,16 +17,16 @@
 #nb # To use Julia on Google colab, we will install Julia using the official version
 #nb # manager Juliup. From the default Python runtime, we can access the shell by
 #nb # starting a line with `!`.
-#nb 
+
 #nb ##PYTHONRUNTIME !curl -fsSL https://install.julialang.org | sh -s -- --yes
-#nb 
+
 #nb # We can check that Julia is successfully installed on the Colab instance.
-#nb 
+
 #nb ##PYTHONRUNTIME !~/.juliaup/bin/julia -e 'println("Hello")'
-#nb 
+
 #nb # We now proceed to install the necessary Julia packages, including `IJulia` which
 #nb # will add the Julia notebook kernel.
-#nb 
+
 #nb ##PYTHONRUNTIME %%shell
 #nb ##PYTHONRUNTIME ~/.juliaup/bin/julia -e '''
 #nb ##PYTHONRUNTIME     using Pkg
@@ -45,7 +45,7 @@
 #nb ##PYTHONRUNTIME         "Zygote",
 #nb ##PYTHONRUNTIME     ])
 #nb ##PYTHONRUNTIME '''
-#nb 
+
 #nb # Once this cell has finished running (this may take a few minutes,
 #nb # depending on what resources Colab decides to give you), do the following:
 #nb #
