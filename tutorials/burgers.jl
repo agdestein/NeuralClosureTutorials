@@ -421,7 +421,7 @@ gif(anim)
 
 #-
 
-# ## Discrete filtering and large eddy simulation (LES)
+# ## Problem set-up for large eddy simulation (LES) with neural networks
 #
 # We now assume that we are only interested in the large scale structures of the
 # flow. To compute those, we would ideally like to use a coarser resolution
@@ -442,7 +442,7 @@ gif(anim)
 # between the coarse grid and filtered fine grid right hand sides. Given
 # $\bar{u}$ only, this commutator error is **unknown**, and the eqation
 # needs a closure model.
-
+#
 # To close the equations, we approximate the unknown commutator error using a
 # closure model $m$ with parameters $\theta$:
 #
@@ -540,14 +540,86 @@ function create_data(
     data
 end
 
-# ### Choosing model parameters
+# Now we set up an experiment. We need to decide on the following:
+#
+# - Problem parameter: $\mu$
+# - LES resolution
+# - DNS resolution
+# - Discrete filter
+# - Number of initial conditions
+# - Simulation time: Too short, and we won't have time to detect instabilities
+#   created by our model; too long, and most of the data will be too smooth for
+#   a closure model to be needed (due to viscosity)
+#
+# In addition, we will split our data into
+#
+# - Training data (for choosing $\theta$)
+# - Validation data (just for monitoring training, choose when to stop)
+# - Testing data (for testing performance on unseen data)
+
+## Resolution
+nx_les = 64
+nx_dns = 1024
+
+## Grids
+x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
+x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
+
+## Grid sizes
+Δx_les = 1 / nx_les
+Δx_dns = 1 / nx_dns
+
+# We will use a Gaussian filter kernel, truncated to zero outside of $3 / 2$
+# filter widths.
+
+## Filter width
+ΔΦ = 5 * Δx_les
+
+## Filter kernel
+gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
+top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
+kernel = gaussian
+
+## Discrete filter matrix (with periodic extension and threshold for sparsity)
+Φ = sum(-1:1) do z
+    d = @. x_les - x_dns' - z
+    @. kernel(ΔΦ, d) * (abs(d) ≤ 3 / 2 * ΔΦ)
+end
+Φ = Φ ./ sum(Φ; dims = 2) ## Normalize weights
+Φ = sparse(Φ)
+dropzeros!(Φ)
+heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
+
+# Create the training, validation, and testing datasets.
+# Use a different time step for testing to detect time step overfitting.
+
+μ = 5.0e-4
+data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
+data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
+data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
+
+# For three of the training samples, we see that while the DNS solution contains shocks,
+# the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
+# final commutator errors:
+
+plot(
+    data_train.c[:, 1:3, end];
+    label = ["Sample 1" "Sample 2" "Sample 3"],
+    xlabel = "x",
+    title = "Commutator errors at final time",
+)
+
+# The commutator errors are large near the DNS shocks, and small everywhere else.
+# The job of the closure model is thus to detect and correct for the DNS shocks
+# using the LES solution only.
+#
+# The information about our problem is now fully contained in the data sets. We
+# can now choose the closure model to solve the problem.
+
+# ### Loss function
 #
 # To choose $\theta$, we will minimize a loss function using an gradient
 # descent based optimization method ("train" the neural network).
-
-#-
-
-# #### Loss function
 #
 # Since the model is used to predict the commutator error, the obvious choice
 # of loss function is the a priori loss function
@@ -561,7 +633,7 @@ end
 # respect to $\theta$ is thus simple. The gradient is given by
 #
 # $$
-# \frac{\mathrm{d} L^\text{prior}}{\mathrm{d} t}(\theta) = 2 (m(\bar{u},
+# \frac{\mathrm{d} L^\text{prior}}{\mathrm{d} \theta}(\theta) = 2 (m(\bar{u},
 # \theta) - c(u, \bar{u}))^\mathsf{T}
 # \frac{\partial m}{\partial \theta}(\bar{u}, \theta),
 # $$
@@ -653,28 +725,28 @@ function trajectory_error(model, u; dt, params...)
     loss / (nt - 1)
 end
 
-# To limit the length of the computational chain, we only unroll `nunroll`
+# To limit the length of the computational chain, we only unroll `n_unroll`
 # time steps at each loss evaluation. The time step from which to unroll is
 # chosen at random at each evaluation, as are the initial conditions (`nuse`).
 #
 # The non-trainable parameters (e.g. $\mu$) are passed in `params`.
 
-function create_randloss_trajectory(model, data; nuse = 1, nunroll = 10, params...)
+function create_randloss_trajectory(model, data; nuse = 1, n_unroll = 10, params...)
     (; u, dt) = data
     nsample = size(u, 2)
     nt = size(u, 3)
-    @assert nt ≥ nunroll
+    @assert nt ≥ n_unroll
     @assert nsample ≥ nuse
     function randloss(θ)
         isample = Zygote.@ignore sort(shuffle(1:nsample)[1:nuse])
-        istart = Zygote.@ignore rand(1:nt-nunroll)
-        it = Zygote.@ignore istart:istart+nunroll
+        istart = Zygote.@ignore rand(1:nt-n_unroll)
+        it = Zygote.@ignore istart:istart+n_unroll
         uuse = Zygote.@ignore u[:, isample, it]
         trajectory_loss(model, uuse; dt, params..., θ)
     end
 end
 
-# ### Training
+# ### Training settings
 #
 # During training, we will monitor the error on the validation dataset with a
 # callback. We will plot the history of the a priori and a posteriori errors.
@@ -783,29 +855,43 @@ end
 # the same "structure". See Melchers [^2].
 
 """
-    create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
+    create_cnn(;
+        radii,
+        channels,
+        activations,
+        use_bias,
+        rng,
+        input_channels = (u -> u,),
+    )
 
 Create CNN.
 
 Keyword arguments:
 
-- `r`: Vector of kernel radii
+- `radii`: Vector of kernel radii
 - `channels`: Vector layer output channel numbers
-- `σ`: Vector of activation functions
+- `activations`: Vector of activation functions
 - `use_bias`: Vectors of indicators for using bias
 - `rng`: Random number generator
 - `input_channels`: Tuple of input channel contstructors
 
 Return `(cnn, θ)`, where `cnn(v, θ)` acts like a force on `v`.
 """
-function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,))
+function create_cnn(;
+    radii,
+    channels,
+    activations,
+    use_bias,
+    rng,
+    input_channels = (u -> u,),
+)
     @assert channels[end] == 1 "A unique output channel is required"
 
     ## Add number of input channels
     channels = [length(input_channels); channels]
 
     ## Padding length
-    padding = sum(r)
+    padding = sum(radii)
 
     ## Create CNN
     create_model(
@@ -822,12 +908,12 @@ function create_cnn(; r, channels, σ, use_bias, rng, input_channels = (u -> u,)
             ## Some convolutional layers
             (
                 Conv(
-                    (2 * r[i] + 1,),
+                    (2 * radii[i] + 1,),
                     channels[i] => channels[i+1],
-                    σ[i];
+                    activations[i];
                     use_bias = use_bias[i],
                     init_weight = glorot_uniform_64,
-                ) for i ∈ eachindex(r)
+                ) for i ∈ eachindex(radii)
             )...,
 
             ## Remove singleton output channel
@@ -1004,7 +1090,7 @@ end
 # we allow for a tuple of predetermined input channels.
 
 """
-    create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
+    create_fno(; channels, kmax, activations, rng, input_channels = (u -> u,))
 
 Create FNO.
 
@@ -1012,13 +1098,13 @@ Keyword arguments:
 
 - `channels`: Vector of output channel numbers
 - `kmax`: Vector of cut-off wavenumbers
-- `σ`: Vector of activation functions
+- `activations`: Vector of activation functions
 - `rng`: Random number generator
 - `input_channels`: Tuple of input channel constructors
 
 Return `(fno, θ)`, where `fno(v, θ)` acts like a force on `v`.
 """
-function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
+function create_fno(; channels, kmax, activations, rng, input_channels = (u -> u,))
     ## Add number of input channels
     channels = [length(input_channels); channels]
 
@@ -1033,7 +1119,7 @@ function create_fno(; channels, kmax, σ, rng, input_channels = (u -> u,))
 
             ## Some Fourier layers
             (
-                FourierLayer(kmax[i], channels[i] => channels[i+1]; σ = σ[i]) for
+                FourierLayer(kmax[i], channels[i] => channels[i+1]; σ = activations[i]) for
                 i ∈ eachindex(kmax)
             )...,
 
@@ -1056,104 +1142,21 @@ end
 
 # ## Getting to business: Training and comparing closure models
 #
-# If you have made it this far, you will probably have noticed that we have
-# not yet done any computation (apart from one anecdotical Burgers simulation).
-# We have only defined functions: losses, initializers, models, training...
-#
-# Now we set up an experiment. We need to decide on the following:
-#
-# - Problem parameter: $\mu$
-# - LES resolution
-# - DNS resolution
-# - Discrete filter
-# - Number of initial conditions
-# - Closure model: FNO and CNN
-# - Simulation time: Too short, and we won't have time to detect instabilities
-#   created by our model; too long, and most of the data will be too smooth for
-#   a closure model to be needed (due to viscosity)
-#
-# In addition, we will split our data into
-#
-# - Training data (for choosing $\theta$)
-# - Validation data (just for monitoring training, choose when to stop)
-# - Testing data (for testing performance on unseen data)
-
-# ### Discretization and filter
-#
-# We will use a Gaussian filter kernel, truncated to zero outside of $3 / 2$
-# filter widths.
-
-## Resolution
-nx_les = 64
-nx_dns = 1024
-
-## Grids
-x_les = LinRange(0.0, 1.0, nx_les + 1)[2:end]
-x_dns = LinRange(0.0, 1.0, nx_dns + 1)[2:end]
-
-## Grid sizes
-Δx_les = 1 / nx_les
-Δx_dns = 1 / nx_dns
-
-## Filter width
-ΔΦ = 5 * Δx_les
-
-## Filter kernel
-gaussian(Δ, x) = sqrt(6 / π) / Δ * exp(-6x^2 / Δ^2)
-top_hat(Δ, x) = (abs(x) ≤ Δ / 2) / Δ
-kernel = gaussian
-
-## Discrete filter matrix (with periodic extension and threshold for sparsity)
-Φ = sum(-1:1) do z
-    d = @. x_les - x_dns' - z
-    @. kernel(ΔΦ, d) * (abs(d) ≤ 3 / 2 * ΔΦ)
-end
-Φ = Φ ./ sum(Φ; dims = 2) ## Normalize weights
-Φ = sparse(Φ)
-dropzeros!(Φ)
-heatmap(Φ; yflip = true, xmirror = true, title = "Filter matrix")
-
-# ### Create data
-#
-# Create the training, validation, and testing datasets.
-# Use a different time step for testing to detect overfitting.
-
-μ = 5.0e-4
-data_train = create_data(10, Φ; μ, nt = 2000, dt = 1.0e-4, doplot = true);
-data_valid = create_data(2, Φ; μ, nt = 500, dt = 1.3e-4);
-data_test = create_data(3, Φ; μ, nt = 1000, dt = 1.1e-4);
-
-# For three of the training samples, we see that while the DNS solution contains shocks,
-# the filtered DNS solution looks smooth. Lets have a look at the corresponding (first three)
-# final commutator errors:
-
-plot(
-    data_train.c[:, 1:3, end];
-    label = ["Sample 1" "Sample 2" "Sample 3"],
-    xlabel = "x",
-    title = "Commutator errors at final time",
-)
-
-# The commutator errors are large near the DNS shocks, and small everywhere else.
-# The job of the closure model is thus to detect and correct for the DNS shocks
-# using the LES solution only.
-
-# ### Closure models
-#
-# We also include a "no closure" model (baseline for comparison).
+# We start by defining the "no closure" model, where $m = 0$.
+# This is the baseline, and corresponds to coarse DNS.
 
 noclosure, θ_noclosure = (u, θ) -> zero(u), nothing
 
-# #### Train a CNN
+# ### Train a CNN
 #
-# Create CNN model. Note that the last activation is `identity`, as we don't
-# want to restrict the output values. We can inspect the structure in the
+# We now create CNN model. Note that the last activation is `identity`, as we
+# don't want to restrict the output values. We can inspect the structure in the
 # wrapped Lux `Chain`.
 
 cnn, θ_cnn = create_cnn(;
-    r = [2, 2, 2, 2],
+    radii = [2, 2, 2, 2],
     channels = [8, 8, 8, 1],
-    σ = [leakyrelu, leakyrelu, leakyrelu, identity],
+    activations = [leakyrelu, leakyrelu, leakyrelu, identity],
     use_bias = [true, true, true, false],
     input_channels = (u -> u, u -> u .^ 2),
     rng,
@@ -1167,7 +1170,7 @@ loss = create_randloss_commutator(cnn, data_train; nuse = 50)
 ##     les,
 ##     data_train;
 ##     nuse = 3,
-##     nunroll = 10,
+##     n_unroll = 10,
 ##     data_train.μ,
 ##     m = cnn,
 ## )
@@ -1205,7 +1208,7 @@ trainstate = train(;
 fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
     kmax = [16, 16, 16, 8],
-    σ = [gelu, gelu, gelu, identity],
+    activations = [gelu, gelu, gelu, identity],
     input_channels = (u -> u, u -> u .^ 2),
     rng,
 )
@@ -1218,7 +1221,7 @@ loss = create_randloss_commutator(fno, data_train; nuse = 50)
 ##     les,
 ##     data_train;
 ##     nuse = 3,
-##     nunroll = 10,
+##     n_unroll = 10,
 ##     data_train.μ,
 ##     m = fno,
 ## )
@@ -1296,11 +1299,11 @@ end
 # ### 1. Trajectory fitting (a posteriori loss function)
 #
 # 1. Fit a closure model using the a posteriori loss function.
-# 1. Investigate the effect of the parameter `nunroll`. Try for example
-#    `@time randloss(θ)` for `unroll = 10` and `nunroll = 20`
+# 1. Investigate the effect of the parameter `n_unroll`. Try for example
+#    `@time randloss(θ)` for `unroll = 10` and `n_unroll = 20`
 #    (execute `randloss` once first to trigger compilation).
 # 1. Discuss the statement "$L^\text{prior}$ and $L^\text{post}$ are almost the
-#    same when `nunroll = 1`" with your neighbour. Are they exactly the same if
+#    same when `n_unroll = 1`" with your neighbour. Are they exactly the same if
 #    we use forward Euler ($u^{n + 1} = u^n + \Delta t f(u^n)$) instead of RK4?
 #
 # ### 2. Naive neural closure model
