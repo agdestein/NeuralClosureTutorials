@@ -584,17 +584,18 @@ dt = 1.0e-4
 anim = Animation()
 for it = 0:5000
     ## Only needed if we are not running interactively
-    ## (since we are not inside a function)
-    ## e.g. on GitHub
-    global u
-    global ubar
-    global vbar
-    ## Skip first step to get initial plot
+    ## (since we are not inside a function) e.g. on GitHub
+    ## Note: These variables are still local to the cell
+    global u, ubar, vbar
+
+    ## Time step: Skip first step to get initial plot
     if it > 0
         u = step_rk4(dns, u, dt; μ)
         vbar = step_rk4(dns, vbar, dt; μ)
         ubar = Φ * u
     end
+
+    # Plot
     if it % 50 == 0
         sol = plot(;
             ylims = (-1.0, 1.0),
@@ -728,29 +729,29 @@ end
 # at each time point.
 
 function trajectory_loss(model, u; dt, params...)
-    nt = size(u, 3)
+    nt = size(u, 3) - 1
     loss = 0.0
     v = u[:, :, 1]
-    for i = 2:nt
+    for i = 1:nt
         v = step_rk4(model, v, dt; params...)
-        ui = u[:, :, i]
+        ui = u[:, :, i+1]
         loss += sum(abs2, v - ui) / sum(abs2, ui)
     end
-    loss / (nt - 1)
+    loss / nt
 end
 
 # We also make a non-squared variant for error analysis.
 
 function trajectory_error(model, u; dt, params...)
-    nt = size(u, 3)
+    nt = size(u, 3) - 1
     loss = 0.0
     v = u[:, :, 1]
-    for i = 2:nt
+    for i = 1:nt
         v = step_rk4(model, v, dt; params...)
-        ui = u[:, :, i]
+        ui = u[:, :, i+1]
         loss += norm(v - ui) / norm(ui)
     end
-    loss / (nt - 1)
+    loss / nt
 end
 
 # To limit the length of the computational chain, we only unroll `n_unroll`
@@ -788,13 +789,7 @@ function plot_convergence(state, data)
     fig = plot(; yscale = :log10, xlabel = "Iterations", title = "Relative error")
     hline!(fig, [1.0]; color = 1, linestyle = :dash, label = "Prior: No model")
     plot!(fig, state.ihist, state.ehist_prior; color = 1, label = "Prior: Model")
-    hline!(
-        fig,
-        [e_post_ref];
-        color = 2,
-        linestyle = :dash,
-        label = "Posterior: No model",
-    )
+    hline!(fig, [e_post_ref]; color = 2, linestyle = :dash, label = "Posterior: No model")
     plot!(fig, state.ihist, state.ehist_post; color = 2, label = "Posterior: Model")
     fig
 end
@@ -1204,18 +1199,19 @@ m_fno.chain
 
 m, θ, label = m_cnn, θ_cnn, "CNN";
 ## m, θ, label = m_fno, θ_fno, "FNO";
+# Choose loss
 
-# Choose loss function
+loss_prior = create_randloss_commutator(m, data_train; nuse = 50);
 
-loss = create_randloss_commutator(m, data_train; nuse = 50);
-## loss = create_randloss_trajectory(
-##     les,
-##     data_train;
-##     nuse = 3,
-##     n_unroll = 10,
-##     data_train.μ,
-##     m,
-## );
+#-
+
+loss_post =
+    create_randloss_trajectory(les, data_train; nuse = 3, n_unroll = 10, data_train.μ, m);
+
+#-
+
+loss = loss_prior
+## loss = loss_post
 
 # Initialize training state. Note that we have to provide an optimizer, here
 # `Adam(η)` where `η` is the learning rate [^4]. This optimizer exploits the
@@ -1269,21 +1265,25 @@ v = u[:, 1]
 anim = Animation()
 for it = 0:nt
     ## Only needed if we are not running interactively
-    ## (since we are not inside a function)
-    ## e.g. on GitHub
-    global v0
-    global v
+    ## (since we are not inside a function) e.g. on GitHub
+    ## Note: These variables are still local to the cell
+    global v0, v
+
+    ## Time step: Skip first step to get initial plot
     if it > 0
         v0 = step_rk4(dns, v0, dt; μ)
         v = step_rk4(les, v, dt; μ, m, θ)
     end
+
+    # Plot
     if it % 50 == 0
         fig = plot(;
             ylims = extrema(u[:, 1]),
             xlabel = "x",
-            title = @sprintf("Solution, t = %.3f", it * dt)
+            title = @sprintf("Solution, t = %.3f", it * dt),
+            legend = :topright,
         )
-        plot!(fig, x_les, u[:, it + 1]; label = "Ref")
+        plot!(fig, x_les, u[:, it+1]; label = "Ref")
         plot!(fig, x_les, v0; label = "m=0")
         plot!(fig, x_les, v; label)
         frame(anim, fig)

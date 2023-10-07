@@ -10,7 +10,7 @@ function notebook_without_pythonruns(f; name = f, kwargs...)
             end
         end
     end
-    rm(tempname * ".ipynb") 
+    rm(tempname * ".ipynb")
     name * ".ipynb"
 end
 
@@ -21,5 +21,9 @@ files = ["burgers", "navier_stokes_spectral"]
 for f in files
     # Literate.notebook(f * ".jl"; execute = false)
     notebook_without_pythonruns(f; execute = false)
-    Literate.markdown(f * ".jl"; flavor = Literate.CommonMarkFlavor())
+    Literate.markdown(
+        f * ".jl";
+        flavor = Literate.CommonMarkFlavor(),
+        codefence = "```julia" => "```",
+    )
 end
