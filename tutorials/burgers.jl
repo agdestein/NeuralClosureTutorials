@@ -330,7 +330,7 @@ end
 function create_initial_conditions(
     nx,
     nsample;
-    kmax = 10,
+    kmax = 16,
     decay = k -> (1 + abs(k))^(-6 / 5),
 )
     ## Fourier basis
