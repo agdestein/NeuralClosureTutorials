@@ -1093,13 +1093,13 @@ function ((; kmax, cout, cin, σ)::FourierLayer)(x, params, state)
     ## - go back to real valued spatial representation
     ikeep = 1:kmax+1
     nkeep = kmax + 1
-    z = fft(x, 1)
+    z = rfft(x, 1)
     z = z[ikeep, :, :]
     z = reshape(z, nkeep, 1, cin, :)
     z = sum(R .* z; dims = 3)
     z = reshape(z, nkeep, cout, :)
-    z = vcat(z, zeros(nx - kmax - 1, size(z, 2), size(z, 3)))
-    z = real.(ifft(z, 1))
+    z = vcat(z, zeros(nx ÷ 2 + 1 - kmax - 1, size(z, 2), size(z, 3)))
+    z = irfft(z, nx, 1)
 
     ## Outer layer: Activation over combined spatial and spectral parts
     ## Note: Even though high wavenumbers are chopped off in `z` and may
