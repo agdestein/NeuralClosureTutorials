@@ -570,11 +570,8 @@ for it = 0:5000
         vbar = step_rk4(dns, vbar, dt; μ)
         ubar = Φ * u
     end
-```
 
-Plot
-
-```julia
+    # Plot
     if it % 50 == 0
         sol = plot(;
             ylims = (-1.0, 1.0),
@@ -1300,11 +1297,8 @@ for it = 0:nt
         v0 = step_rk4(dns, v0, dt; μ)
         v = step_rk4(les, v, dt; μ, m, θ)
     end
-```
 
-Plot
-
-```julia
+    # Plot
     if it % 50 == 0
         fig = plot(;
             ylims = extrema(u[:, 1]),
