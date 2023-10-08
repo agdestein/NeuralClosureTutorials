@@ -247,7 +247,7 @@ end
 # \end{pmatrix}.
 # $$
 #
-# _Note: The Runge-Kutta coefficients are usually presented in with a shifted
+# _Note: The Runge-Kutta coefficients are usually presented in a shifted
 # version of our $A$, and also includes two vectors $c$ and $b$. Since our
 # system is autonomous and the RK scheme is explicit, we can write it in this
 # simple form._
@@ -780,7 +780,7 @@ end
 # During training, we will monitor the error on the validation dataset with a
 # callback. We will plot the history of the prior and posterior errors.
 
-## Initial empty history (with no-model errors)
+## Initial empty history
 initial_callbackstate() = (; ihist = Int[], ehist_prior = zeros(0), ehist_post = zeros(0))
 
 ## Plot convergence
@@ -965,7 +965,7 @@ end
 # where $z$ is defined by its Fourier series coefficients $\hat{z}(k) = R(k)
 # \hat{u}(k)$ for all wavenumbers $k \in \mathbb{Z}$ and some weight matrix
 # collection $R(k) \in \mathbb{C}^{n_\text{out} \times n_\text{in}}$. The
-# important part is the following choice: $R(k) = 0$ for $\| k \| >
+# important part is the following choice: $R(k) = 0$ for $| k | >
 # k_\text{max}$ for some $k_\text{max}$. This truncation makes the FNO
 # applicable to any spatial $N$-discretization of $u$ and $w$ as long as $N > 2
 # k_\text{max}$. The same weight matrices may be reused for different
@@ -1199,6 +1199,7 @@ m_fno.chain
 
 m, θ, label = m_cnn, θ_cnn, "CNN";
 ## m, θ, label = m_fno, θ_fno, "FNO";
+
 # Choose loss
 
 loss_prior = create_randloss_commutator(m, data_train; nuse = 50);
@@ -1210,8 +1211,8 @@ loss_post =
 
 #-
 
-loss = loss_prior
-## loss = loss_post
+loss = loss_prior;
+## loss = loss_post;
 
 # Initialize training state. Note that we have to provide an optimizer, here
 # `Adam(η)` where `η` is the learning rate [^4]. This optimizer exploits the

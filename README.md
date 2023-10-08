@@ -21,6 +21,15 @@ notebook.
 
 ## Running the tutorials
 
+It is recommended to start with the Burgers tutorial. The tutorial includes
+some exercises, but you do not need to know Julia to do them. Setting up the
+tutorial environment may take a few minutes. With the default parameters, the
+tutorial should run in about a minute on a modern laptop (including training).
+The resulting animation should already show a significant improvement to the
+baseline model.
+
+![Closure](assets/closure.gif)
+
 ### Option 1: Running locally on your machine
 
 To run the tutorials locally, you need to install Julia on your machine. An
@@ -63,13 +72,14 @@ editor such as VSCode can also be useful. Proposed workflow:
    bar of VSCode, or, alternatively, open the command palette (`Ctrl`/`Cmd` +
    `Shift` + `P`), start typing `julia`, and select
    `Julia: Change current environment`.
-   Set the environment to `NeuralClosure`. 
+   Set the environment to `NeuralClosure`.
 1. In the file explorer (`Ctrl`/`Cmd` + `Shift` + `E`), you should see the
    files. Open `tutorials/burgers.ipynb`.
-   Execute the notebook one cell at the time with `Shift` + `Enter`.
-   Output and plots should appear below each cell.
+   You can skip the Colab section.
    Start with uncommenting and executing the cell with
    `Pkg.instantiate()`, which will install the local dependencies.
+   Execute the notebook one cell at the time with `Shift` + `Enter`.
+   Output and plots should appear below each cell.
 
 Note: If you do not like the notebook format, you can alternatively open the
 source script `tutorials/burgers.jl` or the markdown file
@@ -85,7 +95,7 @@ If you do not want to install Julia locally, you can run it on a Google
 cloud machine instead. This requires a Google account. Steps:
 
 1. Open [Google Colab](https://colab.research.google.com/)
-2. Sign in to your Google account. 
+2. Sign in to your Google account.
 3. Click on `File > Upload Notebook > GitHub` and paste the following url:
    ```
    https://github.com/agdestein/NeuralClosure/
