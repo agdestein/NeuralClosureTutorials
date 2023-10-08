@@ -595,7 +595,7 @@ for it = 0:5000
         ubar = Φ * u
     end
 
-    # Plot
+    ## Plot
     if it % 50 == 0
         sol = plot(;
             ylims = (-1.0, 1.0),
@@ -1275,7 +1275,7 @@ for it = 0:nt
         v = step_rk4(les, v, dt; μ, m, θ)
     end
 
-    # Plot
+    ## Plot
     if it % 50 == 0
         fig = plot(;
             ylims = extrema(u[:, 1]),
