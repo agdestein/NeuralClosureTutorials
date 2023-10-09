@@ -19,16 +19,18 @@ versions are auto-generated from the Julia source files using
 See the script [`make.jl`](./make.jl) for converting the script to markdown or
 notebook.
 
+## Example simulations
+
+![Burgers](assets/burgers.gif)
+
+![Navier-Stokes](assets/navier_stokes.gif)
+
 ## Running the tutorials
 
 It is recommended to start with the Burgers tutorial. The tutorial includes
 some exercises, but you do not need to know Julia to do them. Setting up the
 tutorial environment may take a few minutes. With the default parameters, the
 tutorial should run in about a minute on a modern laptop (including training).
-The resulting animation should already show a significant improvement to the
-baseline model.
-
-![Closure](assets/closure.gif)
 
 ### Option 1: Running locally on your machine
 
