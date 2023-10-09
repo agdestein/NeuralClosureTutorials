@@ -948,6 +948,33 @@ function create_cnn(;
 end
 ```
 
+#### Eddy viscosity models
+
+A common closure models consists of computing a turbulent viscosity
+$\mu_t$ from the large scale velocity field $\bar{v}$. Here we will
+use one of the other closure models to predict that viscosity. Since
+this term will be non-constant in space, we need to put it "in between"
+the two spatial derivatives in the diffusion term, similarly to how
+we add the non-constant numerical viscosity in $f_\text{shock}$. In
+continuous space, the closure model would be
+
+$$
+m(\bar{u})(x) = \frac{\partial}{\partial x} \left( \mu_t(\bar{u})(x) \frac{\partial \bar{u}}{\partial x} \right).
+$$
+
+```julia
+function create_eddy_viscosity(turb)
+    function eddy_visosity(u, θ)
+        Δx = 1 / size(u, 1)
+        u₊ = circshift(u, -1)
+        μ = turb(u, θ)
+        ϕ₊ = @. -μ * (u₊ - u) / Δx
+        ϕ₋ = circshift(ϕ₊, 1)
+        @. -(ϕ₊ - ϕ₋) / Δx
+    end
+end
+```
+
 #### Fourier neural operator architecture (FNO)
 
 A Fourier neural operator [^3] is a network composed of _Fourier Layers_ (FL).
@@ -1193,6 +1220,23 @@ m_cnn, θ_cnn = create_cnn(;
 m_cnn.chain
 ```
 
+For the eddy visosity, we enforce a positive value with `gelu`,
+as we do not want any anti-diffusion.
+
+```julia
+turb, θ_eddy = create_cnn(;
+    radii = [2, 2, 2, 2],
+    channels = [8, 8, 8, 1],
+    activations = [leakyrelu, leakyrelu, leakyrelu, gelu],
+    use_bias = [true, true, true, false],
+    input_channels = (u -> u, u -> u .^ 2),
+    rng,
+)
+θ_eddy = θ_eddy / 10
+m_eddy = create_eddy_viscosity(turb)
+m_eddy.turb.chain
+```
+
 ```julia
 m_fno, θ_fno = create_fno(;
     channels = [5, 5, 5, 5],
@@ -1206,6 +1250,7 @@ m_fno.chain
 
 ```julia
 m, θ, label = m_cnn, θ_cnn, "CNN";
+# m, θ, label = m_eddy, θ_eddy, "Eddy";
 # m, θ, label = m_fno, θ_fno, "FNO";
 ```
 
