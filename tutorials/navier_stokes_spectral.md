@@ -22,8 +22,8 @@ f_y)$ is the body force.
 We can represent the solution in spectral space as follows:
 
 $$
-u(x, t) = \sum_{k \in \mathbb{Z}^2} \hat{u}(k, t) \mathrm{e}^{\mathrm{i}
-k^\mathsf{T} x}.
+u(x, t) = \sum_{k \in \mathbb{Z}^2} \hat{u}(k, t) \mathrm{e}^{2 \pi
+\mathrm{i} k^\mathsf{T} x}.
 $$
 
 Instead of the continuous solution $u$, we now have a countable number of
@@ -32,36 +32,35 @@ coefficients $\hat{u}$.
 The mass equation then takes the form
 
 $$
-\mathrm{i} k^\mathsf{T} \hat{u} = 0
+2 \pi \mathrm{i} k^\mathsf{T} \hat{u} = 0
 $$
 
 and similarly for the momentum equations:
 
 $$
 \begin{split}
-\frac{\partial \hat{u}}{\partial t} & = - \mathrm{i} k \hat{p} - \mathrm{i}
-\widehat{u u^\mathsf{T}} k - \nu \| k \|^2 \hat{u} + \hat{f} \\
-& =  - \mathrm{i} k \hat{p} + \hat{F}(\hat{u}),
+\frac{\partial \hat{u}}{\partial t} & = - 2 \pi \mathrm{i} k \hat{p} - 2 \pi \mathrm{i} \widehat{u u^\mathsf{T}} k - 4 \pi^2 \nu \| k \|^2 \hat{u} + \hat{f} \\
+& = - 2 \pi \mathrm{i} k \hat{p} + \hat{F}(\hat{u}),
 \end{split}
 $$
 
-where $k = (k_x, k_y)$ is the wave number, $\hat{p}$ is the Fourier
+where $k = (k_x, k_y)$ is the wavenumber, $\hat{p}$ is the Fourier
 coefficients of $p$, and similarly for $\hat{u} = (\hat{u}_x, \hat{u}_y)$ and
 $\hat{f} = (\hat{f}_x, \hat{f}_y)$. These equations are obtained by replacing
-$\nabla$ with $\mathrm{i} k$. We will also name the nonlinear (quadratic)
-term $Q = - \mathrm{i} \widehat{u u^\mathsf{T}} k$. Note that the non-linear
-term $u u^\mathsf{T}$ is still computed in physical space, as computing it in
-spectral space would require evaluating a convolution integral instead of a
-point-wise product. Note also that since the domain $\Omega$ is compact, the
-modes are countable, meaning that $k \in \mathbb{Z}^2$, paving the way for
-discretization by truncation.
+$\nabla$ with $2 \pi \mathrm{i} k$. We will also name the nonlinear
+(quadratic) term $Q = - 2 \pi \mathrm{i} \widehat{u u^\mathsf{T}} k$. Note
+that the non-linear term $u u^\mathsf{T}$ is still computed in physical
+space, as computing it in spectral space would require evaluating a
+convolution integral instead of a point-wise product. Note also that since
+the domain $\Omega$ is compact, the modes are countable, meaning that $k \in
+\mathbb{Z}^2$, paving the way for discretization by truncation.
 
 Taking the time derivative of the mass equation gives a spectral Poisson
 equation for the pressure:
 
 $$
-- \| k \|^2 \hat{p} = i k^\mathsf{T} \hat{F}(\hat{u})
-= - k^\mathsf{T} \widehat{u u^\mathsf{T}} k + \mathrm{i} k^\mathsf{T} \hat{f}.
+- 4 \pi^2 \| k \|^2 \hat{p} = 2 \pi i k^\mathsf{T} \hat{F}(\hat{u})
+= - 4 \pi^2 k^\mathsf{T} \widehat{u u^\mathsf{T}} k + 2 \pi \mathrm{i} k^\mathsf{T} \hat{f}.
 $$
 
 The pressure solution is however not defined for $k = 0$, as the pressure is only
@@ -84,21 +83,22 @@ that we set $P(k = 0) = I$, thus preserving averages.
 
 A natural way to discretize the pseudo-spectral Navier-Stokes equations is to
 truncate at a maximum frequency $K$. However, the non-linear term may create
-wave-numbers up to $2 K$ when the input $u$ has wave numbers up to $K$.
+wave-numbers up to $2 K$ when the input $u$ has wavenumbers up to $K$.
 These additional wavenumbers are aliased with the lower resolved ones. We
 will therefore compute the non-linear term from the $2 / 3$ lowest
 wave-numbers of $u$ only (a common heuristic [^1]).
 
 The spatial solution $u(x, y, t)$ will be represented on a uniform grid
 $x = y = (i / n)_{i = 1}^N$, where $N = 2 K$. Using the convention of the fast Fourier
-transform (FFT) [^2], we index the spectral fields by a vector of wave numbers $k_x = k_y = (0, 1, \dots, K -
-1, -K, -(K - 1), \dots 1) \in \mathbb{Z}^N$.
+transform (FFT) [^2], we index the spectral fields by a vector of wavenumbers
+$$
+k_x = k_y = (0, \underbrace{1, 2, \dots, K - 1}_{\text{Positive wavenumbers}}, \underbrace{-K, -(K - 1), \dots, 1}_{\text{Negative wavenumbers}}) \in \mathbb{Z}^N.
+$$
 
 ```julia
 using ComponentArrays
 using CUDA
 using FFTW
-using IJulia
 using LinearAlgebra
 using Lux
 using LuxCUDA
@@ -165,9 +165,9 @@ function Q(u, params)
     qx, qy = eachslice(q; dims = 4)
 
     # Compute partial derivatives in spectral space
-    ikx = im * k
-    iky = im * reshape(k, 1, :)
-    q = @. -ikx * qx - iky * qy
+    ∂x = 2f0π * im * k
+    ∂y = 2f0π * im * reshape(k, 1, :)
+    q = @. -∂x * qx - ∂y * qy
 
     # Zero out high wave-numbers (is this necessary?)
     q = [
@@ -187,7 +187,7 @@ includes the closure term (if any).
 function F(u, params)
     (; normk, nu, f, m, θ) = params
     q = Q(u, params)
-    du = @. q - nu * normk * u + f
+    du = @. q - nu * (2f0π)^2 * normk * u + f
     isnothing(m) || (du += m(u, θ))
     du
 end
@@ -269,7 +269,7 @@ $$
 which becomes
 
 $$
-\hat{\omega} = - \mathrm{i} k_y u_x + \mathrm{i} k_x u_y
+\hat{\omega} = 2 \pi \mathrm{i} k \times u = - 2 \pi \mathrm{i} k_y u_x + 2 \pi \mathrm{i} k_x u_y
 $$
 
 in spectral space.
@@ -277,10 +277,10 @@ in spectral space.
 ```julia
 function vorticity(u, params)
     (; k) = params
-    ikx = im * k
-    iky = im * reshape(k, 1, :)
+    ∂x = 2f0π * im * k
+    ∂y = 2f0π * im * reshape(k, 1, :)
     ux, uy = eachslice(u; dims = 3)
-    ω = @. -iky * ux + ikx * uy
+    ω = @. -∂y * ux + ∂x * uy
     real.(ifft(ω))
 end
 ```
@@ -311,8 +311,6 @@ function create_spectrum(params; A, σ, s)
     T = eltype(x)
     kx = k
     ky = reshape(k, 1, :)
-    a = z(2K, 2K)
-    a = a .+ (1 + 0im)
     τ = 2.0f0π
     a = @. A / sqrt(τ^2 * 2σ^2) *
        exp(-(kx - s)^2 / 2σ^2 - (ky - s)^2 / 2σ^2 - im * τ * rand(T))
@@ -349,7 +347,7 @@ Body force
 # heatmap(fy)
 ```
 
-Store paramaters and precomputed operators in a named tuple to toss around.
+Store parameters and precomputed operators in a named tuple to toss around.
 Having this in a function gets useful when we later work with multiple
 resolutions.
 
@@ -366,9 +364,9 @@ function create_params(
     N = 2K
     x = LinRange(0.0f0, 1.0f0, N + 1)[2:end]
 
-    # Vector of wave numbers
+    # Vector of wavenumbers
 
-    k = ArrayType(fftfreq(N, N))
+    k = ArrayType(fftfreq(N, Float32(N)))
     normk = k .^ 2 .+ k' .^ 2
 
     # Projection components
@@ -378,7 +376,7 @@ function create_params(
     Pxy = @. 0 - kx * ky / (kx^2 + ky^2)
     Pyy = @. 1 - ky * ky / (kx^2 + ky^2)
 
-    # The zero'th component is currently `0/0 = NaN`. For `CuArray`s,
+    # The zeroth component is currently `0/0 = NaN`. For `CuArray`s,
     # we need to explicitly allow scalar indexing.
 
     CUDA.@allowscalar Pxx[1, 1] = 1
@@ -417,6 +415,7 @@ t = 0.0f0
 dt = 1.0f-3
 
 for i = 1:1000
+    global u, t
     t += dt
     u = step_rk4(u, params, dt)
     if i % 10 == 0
@@ -633,16 +632,16 @@ parameters.
 
 ```julia
 # Radius
-r_cnn = [2, 2, 2, 2]
+r_cnn = [2, 2, 2, 2, 2, 2]
 
 # Channels
-ch_cnn = [2, 8, 8, 8, 2]
+ch_cnn = [2, 32, 32, 32, 32, 32, 2]
 
 # Activations
-σ_cnn = [leakyrelu, leakyrelu, leakyrelu, identity]
+σ_cnn = [leakyrelu, leakyrelu, leakyrelu, leakyrelu, leakyrelu, identity]
 
 # Bias
-b_cnn = [true, true, true, false]
+b_cnn = [true, true, true, true, true, false]
 
 _cnn = Chain(
     # Go to physical space
@@ -744,8 +743,8 @@ end
 Create some filtered DNS data (one initial condition only)
 
 ```julia
-nu = 0.001f0
-params_les = create_params(32; nu)
+nu = 5.0f-4
+params_les = create_params(64; nu)
 params_dns = create_params(128; nu)
 
 # Initial conditions
@@ -754,7 +753,8 @@ u = random_field(params_dns)
 # Let's do some time stepping.
 
 t = 0.0f0
-dt = 1.0f-3
+dt = 2.0f-4
+nburn = 500
 nt = 1000
 
 # Filtered snapshots
@@ -768,6 +768,10 @@ spectral_cutoff(u, K) = [
     u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
 ]
 
+anim = Animation()
+for i = 1:nburn
+    u = step_rk4(u, params_dns, dt)
+end
 for i = 1:nt+1
     if i > 1
         t += dt
@@ -782,17 +786,17 @@ for i = 1:nt+1
         ω = Array(vorticity(u, params_dns))
         title = @sprintf("Vorticity, t = %.3f", t)
         fig = heatmap(ω'; xlabel = "x", ylabel = "y", title)
-        display(fig)
-        sleep(0.001) # Time for plot
+        frame(anim, fig)
     end
 end
+gif(anim)
 ```
 
 Choose closure model
 
 ```julia
-m, θ₀ = fno, θ_fno
-# m, θ₀ = cnn, θ_cnn
+m, θ₀, label = cnn, θ_cnn, "CNN"
+# m, θ₀, label = fno, θ_fno, "FNO"
 ```
 
 Choose loss function
@@ -818,9 +822,9 @@ We will monitor the error along the way.
 ```julia
 θ = θ₀
 v_test, c_test = ArrayType(v[:, :, :, end:end]), ArrayType(c[:, :, :, end:end])
-opt = Optimisers.setup(Adam(1.0f-3), θ)
-ncallback = 1
-ntrain = 100
+opt = Optimisers.setup(Adam(1.0f-4), θ)
+ncallback = 20
+ntrain = 1000
 ihist = Int[]
 ehist = Float32[]
 ishift = 0
@@ -838,7 +842,7 @@ for i = 1:ntrain
         push!(ehist, e)
         fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
         hline!(fig, [1.0f0]; linestyle = :dash, label = "No model")
-        plot!(fig, ihist, ehist; label = "FNO")
+        plot!(fig, ihist, ehist; label)
         display(fig)
     end
 end
@@ -850,9 +854,44 @@ GC.gc()
 CUDA.reclaim()
 ```
 
+Once trained, we can  see the closure model in action.
+
+```julia
+u₀ = ArrayType(v[:, :, :, 1:1])
+v_nomodel = u₀
+v_model = u₀
+anim = Animation()
+for i = 1:nt+1
+    global v_nomodel, v_model
+    if i > 1
+        v_nomodel = step_rk4(v_nomodel, params_les, dt)
+        v_model = step_rk4(v_model, (; params_les..., m, θ), dt)
+    end
+    if i % 30 == 0
+        t = (i - 1) * dt
+        (; N) = params_les
+        ω = reshape(Array(vorticity(ArrayType(v[:, :, :, i]), params_les)), N, N)
+        ω_nomodel = reshape(Array(vorticity(v_nomodel, params_les)), N, N)
+        ω_model = reshape(Array(vorticity(v_model, params_les)), N, N)
+        plot_title = @sprintf("Vorticity, t = %.3f", t)
+        fig = plot(
+            heatmap(ω'; colorbar = false, xlabel = "x", ylabel = "y", title = "Target"),
+            heatmap(ω_nomodel'; colorbar = false, xlabel = "x", title = "No model"),
+            heatmap(ω_model'; colorbar = false, xlabel = "x", title = label);
+            plot_title,
+            layout = (1, 3)
+        )
+        frame(anim, fig)
+    end
+end
+gif(anim)
+```
+
 # See also
 
 - <https://github.com/FourierFlows/FourierFlows.jl>
+- <https://github.com/agdestein/IncompressibleNavierStokes.jl>
+- <https://github.com/SciML>
 
 [^1]: S. A. Orszag. _On the elimination of aliasing in finite-difference
       schemes by filtering high-wavenumber components._ Journal of the
