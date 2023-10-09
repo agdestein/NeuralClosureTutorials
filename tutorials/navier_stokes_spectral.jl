@@ -428,7 +428,7 @@ maximum(abs, params.k .* u[:, :, 1] .+ params.k' .* u[:, :, 2])
 t = 0.0f0
 dt = 1.0f-3
 
-for i = 1:1000
+@gif for i = 1:1000
     global u, t
     t += dt
     u = step_rk4(u, params, dt)
@@ -436,8 +436,6 @@ for i = 1:1000
         ω = Array(vorticity(u, params))
         title = @sprintf("Vorticity, t = %.3f", t)
         fig = heatmap(ω'; xlabel = "x", ylabel = "y", title)
-        display(fig)
-        sleep(0.001) # Time for plot
     end
 end
 
@@ -641,16 +639,16 @@ fno(v, θ) = first(_fno(v, θ, state_fno))
 # parameters.
 
 ## Radius
-r_cnn = [2, 2, 2, 2, 2, 2]
+r_cnn = [2, 2, 2, 2]
 
 ## Channels
-ch_cnn = [2, 32, 32, 32, 32, 32, 2]
+ch_cnn = [2, 8, 8, 8, 2]
 
 ## Activations
-σ_cnn = [leakyrelu, leakyrelu, leakyrelu, leakyrelu, leakyrelu, identity]
+σ_cnn = [leakyrelu, leakyrelu, leakyrelu, identity]
 
 ## Bias
-b_cnn = [true, true, true, true, true, false]
+b_cnn = [true, true, true, false]
 
 _cnn = Chain(
     ## Go to physical space
@@ -764,7 +762,8 @@ v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
 ## Commutator errors
 c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1)
 
-spectral_cutoff(u, K) = [
+## Chop off frequencies and multiply with scaling factor
+spectral_cutoff(u, K) = (2K)^2 / (size(u, 1) * size(u, 2)) * [
     u[1:K, 1:K, :] u[1:K, end-K+1:end, :]
     u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
 ]
@@ -828,6 +827,7 @@ for i = 1:ntrain
     opt, θ = Optimisers.update(opt, θ, g)
     if i % ncallback == 0
         e = norm(m(v_test, θ) - c_test) / norm(c_test)
+        printl("Iteration $i,\t\terror $e")
         push!(ihist, ishift + i)
         push!(ehist, e)
         fig = plot(; xlabel = "Iterations", title = "Relative a-priori error")
