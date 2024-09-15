@@ -1028,7 +1028,7 @@ create_eddy_viscosity(turb) =
 # `FourierLayer`, with a default and custom constructor (two constructor
 # methods, the latter making use of the default).
 
-struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
+struct FourierLayer{A,F} <: Lux.AbstractLuxLayer
     kmax::Int
     cin::Int
     cout::Int
