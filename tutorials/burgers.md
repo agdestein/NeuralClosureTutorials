@@ -327,38 +327,40 @@ This is also the point where we have to provide some parameters, including
 - `ncallback`: Number of time steps between plot frames in the animation
 
 ```julia
-nx = 1024
-x = LinRange(0.0, 1.0, nx + 1)[2:end]
+let
+    nx = 1024
+    x = LinRange(0.0, 1.0, nx + 1)[2:end]
 
-# Initial conditions (one sample vector)
-u₀ = create_initial_conditions(nx, 1)
-# u₀ = sin.(2π .* x)
-# u₀ = sin.(4π .* x)
-# u₀ = sin.(6π .* x)
+    # Initial conditions (one sample vector)
+    u₀ = create_initial_conditions(nx, 1)
+    # u₀ = sin.(2π .* x)
+    # u₀ = sin.(4π .* x)
+    # u₀ = sin.(6π .* x)
 
-# Time stepping
-anim = Animation()
-u = solve_ode(
-    f_shock,
-    # f_central,
-    u₀;
-    μ = 5.0e-4,
-    dt = 1.0e-4,
-    nt = 5000,
-    ncallback = 50,
-    callback = (u, t, i) -> frame(
-        anim,
-        plot(
-            x,
-            u;
-            xlabel = "x",
-            ylims = extrema(u₀),
-            # marker = :o,
-            title = @sprintf("Solution, t = %.3f", t)
+    # Time stepping
+    anim = Animation()
+    u = solve_ode(
+        f_shock,
+        # f_central,
+        u₀;
+        μ = 5.0e-4,
+        dt = 1.0e-4,
+        nt = 5000,
+        ncallback = 50,
+        callback = (u, t, i) -> frame(
+            anim,
+            plot(
+                x,
+                u;
+                xlabel = "x",
+                ylims = extrema(u₀),
+                # marker = :o,
+                title = @sprintf("Solution, t = %.3f", t)
+            ),
         ),
-    ),
-)
-gif(anim)
+    )
+    gif(anim)
+end
 ```
 
 This is typical for the Burgers equation: The initial conditions merge to
@@ -552,48 +554,45 @@ To illustrate the closure problem, we will run an LES simulation without a closu
 Consider the following setup:
 
 ```julia
-μ = 5.0e-4
-u = sin.(6π * x_dns)
-ubar = Φ * u
-vbar = ubar
-dt = 1.0e-4
-anim = Animation()
-for it = 0:5000
-    # Only needed if we are not running interactively
-    # (since we are not inside a function) e.g. on GitHub
-    # Note: These variables are still local to the cell
-    global u, ubar, vbar
+let
+    μ = 5.0e-4
+    u = sin.(6π * x_dns)
+    ubar = Φ * u
+    vbar = ubar
+    dt = 1.0e-4
+    anim = Animation()
+    for it = 0:5000
+        # Time step: Skip first step to get initial plot
+        if it > 0
+            u = step_rk4(dns, u, dt; μ)
+            vbar = step_rk4(dns, vbar, dt; μ)
+            ubar = Φ * u
+        end
 
-    # Time step: Skip first step to get initial plot
-    if it > 0
-        u = step_rk4(dns, u, dt; μ)
-        vbar = step_rk4(dns, vbar, dt; μ)
-        ubar = Φ * u
+        # Plot
+        if it % 50 == 0
+            sol = plot(;
+                ylims = (-1.0, 1.0),
+                legend = :topright,
+                title = @sprintf("Solution, t = %.3f", it * dt)
+            )
+            plot!(sol, x_dns, u; label = "u")
+            plot!(sol, x_les, ubar; label = "ū")
+            plot!(sol, x_les, vbar; label = "v̄")
+            c = plot(
+                x_les,
+                Φ * dns(u; μ) - dns(ubar; μ);
+                label = "c(u, ū)",
+                legend = :topright,
+                xlabel = "x",
+                ylims = (-10.0, 10.0),
+            )
+            fig = plot(sol, c; layout = (2, 1))
+            frame(anim, fig)
+        end
     end
-
-    # Plot
-    if it % 50 == 0
-        sol = plot(;
-            ylims = (-1.0, 1.0),
-            legend = :topright,
-            title = @sprintf("Solution, t = %.3f", it * dt)
-        )
-        plot!(sol, x_dns, u; label = "u")
-        plot!(sol, x_les, ubar; label = "ū")
-        plot!(sol, x_les, vbar; label = "v̄")
-        c = plot(
-            x_les,
-            Φ * dns(u; μ) - dns(ubar; μ);
-            label = "c(u, ū)",
-            legend = :topright,
-            xlabel = "x",
-            ylims = (-10.0, 10.0),
-        )
-        fig = plot(sol, c; layout = (2, 1))
-        frame(anim, fig)
-    end
+    gif(anim)
 end
-gif(anim)
 ```
 
 We observe the following:
@@ -963,7 +962,7 @@ m(\bar{u})(x) = \frac{\partial}{\partial x} \left( \mu_t(\bar{u})(x) \frac{\part
 $$
 
 ```julia
-function create_eddy_viscosity(turb)
+create_eddy_viscosity(turb) =
     function eddy_visosity(u, θ)
         Δx = 1 / size(u, 1)
         u₊ = circshift(u, -1)
@@ -972,7 +971,6 @@ function create_eddy_viscosity(turb)
         ϕ₋ = circshift(ϕ₊, 1)
         @. -(ϕ₊ - ϕ₋) / Δx
     end
-end
 ```
 
 #### Fourier neural operator architecture (FNO)
@@ -1030,7 +1028,7 @@ each activation function we give it, creating an optimized FourierLayer for
 methods, the latter making use of the default).
 
 ```julia
-struct FourierLayer{A,F} <: Lux.AbstractExplicitLayer
+struct FourierLayer{A,F} <: Lux.AbstractLuxLayer
     kmax::Int
     cin::Int
     cout::Int
@@ -1325,39 +1323,36 @@ println("$label:\t$e")
 Let's also plot the LES solutions with and without closure model
 
 ```julia
-(; u, dt, μ) = data_test
-u = u[:, 1, :]
-nt = size(u, 2) - 1
-v0 = u[:, 1]
-v = u[:, 1]
-anim = Animation()
-for it = 0:nt
-    # Only needed if we are not running interactively
-    # (since we are not inside a function) e.g. on GitHub
-    # Note: These variables are still local to the cell
-    global v0, v
+let
+    (; u, dt, μ) = data_test
+    u = u[:, 1, :]
+    nt = size(u, 2) - 1
+    v0 = u[:, 1]
+    v = u[:, 1]
+    anim = Animation()
+    for it = 0:nt
+        # Time step: Skip first step to get initial plot
+        if it > 0
+            v0 = step_rk4(dns, v0, dt; μ)
+            v = step_rk4(les, v, dt; μ, m, θ)
+        end
 
-    # Time step: Skip first step to get initial plot
-    if it > 0
-        v0 = step_rk4(dns, v0, dt; μ)
-        v = step_rk4(les, v, dt; μ, m, θ)
+        # Plot
+        if it % 50 == 0
+            fig = plot(;
+                ylims = extrema(u[:, 1]),
+                xlabel = "x",
+                title = @sprintf("Solution, t = %.3f", it * dt),
+                legend = :topright,
+            )
+            plot!(fig, x_les, u[:, it+1]; label = "Ref")
+            plot!(fig, x_les, v0; label = "m=0")
+            plot!(fig, x_les, v; label)
+            frame(anim, fig)
+        end
     end
-
-    # Plot
-    if it % 50 == 0
-        fig = plot(;
-            ylims = extrema(u[:, 1]),
-            xlabel = "x",
-            title = @sprintf("Solution, t = %.3f", it * dt),
-            legend = :topright,
-        )
-        plot!(fig, x_les, u[:, it+1]; label = "Ref")
-        plot!(fig, x_les, v0; label = "m=0")
-        plot!(fig, x_les, v; label)
-        frame(anim, fig)
-    end
+    gif(anim)
 end
-gif(anim)
 ```
 
 ## Modeling exercises
